@@ -9,6 +9,8 @@
 <link rel="apple-touch-icon" href="icon-192.png">
 <meta name="theme-color" content="#12181f">
 <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@2.0.4/dist/qrcode.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
 <style>
   :root{
     --bg: #f2f3f5;
@@ -200,67 +202,73 @@
 
 <script>
 /* ============================================================
-   BACKEND API LAYER
-   Sayfa artık statik bir barındırmadan (GitHub Pages/Firebase vb.)
-   servis ediliyor; veri okuma/yazma hâlâ Google Apps Script + Sheets
-   üzerinden yapılıyor. BACKEND_URL, o Apps Script dağıtımının adresidir.
+   BACKEND: Firebase Firestore
+   Google Sheets/Apps Script yerine, tam olarak bu tür sık/küçük
+   okuma-yazma işlemleri için tasarlanmış hızlı bir veritabanı.
    ============================================================ */
-/* ▼▼▼ Apps Script "Web uygulaması" URL'niz (.../exec) — sadece bu satırı değiştirin ▼▼▼ */
-const BACKEND_URL = 'https://script.google.com/macros/s/AKfycbxXYnGJCkIMhEALDna3vMeFIbexE-SQszt1A-bxE60SZ7W5a6qvOvEwykTQa2be5NmiDQ/exec';
+/* ▼▼▼ Firebase projenizin ayarları — Firebase Console > Proje Ayarları > "Web uygulaması" bölümünden alın ▼▼▼ */
+const firebaseConfig = {
+  apiKey: "AIzaSyAwj70TsOHnNg8-VuGdjfLjLOhG5RwvNQk",
+  authDomain: "nkpv1-d68c3.firebaseapp.com",
+  projectId: "nkpv1-d68c3",
+  storageBucket: "nkpv1-d68c3.firebasestorage.app",
+  messagingSenderId: "184725335779",
+  appId: "1:184725335779:web:905ffb2661b2b13d3a9fd6"
+};
 /* ▲▲▲ */
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
 
 const SITE_URL = window.location.origin + window.location.pathname; // sayfanın kendi gerçek adresi (QR linkleri için)
 const SCAN_ITEM_ID = new URLSearchParams(window.location.search).get('cp') || '';
 
-async function apiCallOnce(payload, timeoutMs){
-  if(!BACKEND_URL) return null;
-  try{
-    const fetchPromise = fetch(BACKEND_URL, {
-      method:'POST',
-      headers:{'Content-Type':'text/plain;charset=utf-8'}, // preflight tetiklemeyen "simple request"
-      body: JSON.stringify(payload)
-    });
-    const timeoutPromise = new Promise((_, reject)=>{
-      setTimeout(()=>reject(new Error('zaman aşımı')), timeoutMs || 20000);
-    });
-    const res = await Promise.race([fetchPromise, timeoutPromise]);
-    return await res.json();
-  }catch(e){
-    console.error('API hatası', e);
-    return null;
-  }
-}
-function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
-/* Zayıf sinyalli konumlarda (nizamiye vb.) tek seferlik bir ağ hatası yüzünden
-   veri kaybolmasın diye, başarısız istekleri kısa aralıklarla birkaç kez tekrar dener. */
-async function apiCall(payload, timeoutMs){
-  for(let attempt=1; attempt<=3; attempt++){
-    const r = await apiCallOnce(payload, timeoutMs);
-    if(r !== null) return r;
-    if(attempt < 3) await sleep(attempt * 1200); // 1.2sn, sonra 2.4sn bekleyip tekrar dene
-  }
-  return null;
-}
-
+/* ---- basit anahtar/değer (personel listesi, form yapısı, admin şifresi) ---- */
 async function kvGet(key, fallback){
-  const r = await apiCall({action:'getKV', key});
-  if(!r || r.value === null || r.value === undefined) return fallback;
-  try{ return JSON.parse(r.value); }catch(e){ return fallback; }
+  try{
+    const doc = await db.collection('kv').doc(key).get();
+    if(!doc.exists) return fallback;
+    const v = doc.data().value;
+    return v === undefined ? fallback : JSON.parse(v);
+  }catch(e){ console.error('kvGet hatası', key, e); return fallback; }
 }
 async function kvSet(key, value){
-  await apiCall({action:'setKV', key, value: JSON.stringify(value)});
+  try{ await db.collection('kv').doc(key).set({value: JSON.stringify(value)}); return true; }
+  catch(e){ console.error('kvSet hatası', key, e); return false; }
 }
+
+/* ---- form gönderimleri ---- */
 async function getSubmissionsRemote(){
-  const r = await apiCall({action:'getSubmissions'});
-  return Array.isArray(r) ? r : [];
-}
-async function getScansRemote(){
-  const r = await apiCall({action:'getScans'});
-  return Array.isArray(r) ? r : [];
+  try{
+    const snap = await db.collection('submissions').get();
+    return snap.docs.map(d=>d.data());
+  }catch(e){ console.error('getSubmissions hatası', e); return []; }
 }
 async function addSubmissionRemote(sub){
-  const r = await apiCall({action:'addSubmission', data: sub});
-  return !!(r && r.ok);
+  try{ await db.collection('submissions').doc(sub.id).set(sub); return true; }
+  catch(e){ console.error('addSubmission hatası', e); return false; }
+}
+async function deleteSubmissionsBeforeRemote(cutoff){
+  try{
+    let deleted = 0;
+    const subsSnap = await db.collection('submissions').where('tarih', '<', cutoff).get();
+    for(const d of subsSnap.docs){ await d.ref.delete(); deleted++; }
+    const scansSnap = await db.collection('scans').where('tarih', '<', cutoff).get();
+    for(const d of scansSnap.docs){ await d.ref.delete(); deleted++; }
+    return {ok:true, deleted};
+  }catch(e){ console.error('silme hatası', e); return {ok:false, deleted:0}; }
+}
+
+/* ---- QR kontrol noktası taramaları ---- */
+async function getScansRemote(){
+  try{
+    const snap = await db.collection('scans').get();
+    return snap.docs.map(d=>d.data());
+  }catch(e){ console.error('getScans hatası', e); return []; }
+}
+async function logScanRemote(data){
+  try{ await db.collection('scans').add(data); return true; }
+  catch(e){ console.error('logScan hatası', e); return false; }
 }
 
 function uid(prefix){ return prefix + '_' + Math.random().toString(36).slice(2,9); }
@@ -340,19 +348,28 @@ const State = {
 };
 
 /* HIZLI: sadece giriş ekranı için gereken küçük veri. Kayıt sayısı ne kadar
-   artarsa artsın bu her zaman hızlı kalır — büyük tabloları okumaz. */
+   artarsa artsın bu her zaman hızlı kalır — büyük koleksiyonları okumaz. */
 async function loadCore(){
-  const r = await apiCall({action:'initCore'}, 20000);
-  if(r && r.personel && r.forms){
-    State.personel = r.personel;
-    State.forms = r.forms;
-    State.adminPin = r.adminPin || '1234';
+  try{
+    let [personel, forms, adminPin] = await Promise.all([
+      kvGet('guv-personel', null),
+      kvGet('guv-formlar', null),
+      kvGet('guv-admin-pin', null),
+    ]);
+    if(personel === null){ personel = SEED_PERSONEL; await kvSet('guv-personel', personel); }
+    if(forms === null){ forms = [seedGuvenlikFormu()]; await kvSet('guv-formlar', forms); }
+    if(adminPin === null){ adminPin = '1234'; await kvSet('guv-admin-pin', adminPin); }
+    State.personel = personel;
+    State.forms = forms;
+    State.adminPin = adminPin;
     return true;
+  }catch(e){
+    console.error('loadCore hatası', e);
+    State.personel = SEED_PERSONEL;
+    State.forms = [seedGuvenlikFormu()];
+    State.adminPin = '1234';
+    return false;
   }
-  State.personel = SEED_PERSONEL;
-  State.forms = [seedGuvenlikFormu()];
-  State.adminPin = '1234';
-  return false;
 }
 
 /* Ancak giriş yapıldıktan SONRA çağrılır: geçmiş formlar + QR taramaları.
@@ -362,27 +379,6 @@ async function loadActivityData(){
   State.submissions = subs;
   State.scans = scans;
   State.activityLoaded = true;
-}
-
-/* Geriye dönük uyumluluk için: eskisi gibi her şeyi tek seferde çeker
-   (şu an kullanılmıyor ama ileride gerekirse diye tutuluyor). */
-async function loadAll(){
-  const r = await apiCall({action:'init'}, 25000);
-  if(r && r.personel && r.forms){
-    State.personel = r.personel;
-    State.forms = r.forms;
-    State.adminPin = r.adminPin || '1234';
-    State.submissions = r.submissions || [];
-    State.scans = r.scans || [];
-    State.activityLoaded = true;
-    return true;
-  }
-  State.personel = SEED_PERSONEL;
-  State.forms = [seedGuvenlikFormu()];
-  State.adminPin = '1234';
-  State.submissions = [];
-  State.scans = [];
-  return false;
 }
 
 /* Belirli bir kontrol noktası (itemId) için bugüne ait EN SON taramayı bulur */
@@ -1208,9 +1204,10 @@ function renderAyarlarTab(){
     const cutoff = document.getElementById('cleanupDate').value;
     if(!cutoff){ toast('Önce bir tarih seçin.'); return; }
     if(!confirm(`${trDate(cutoff)} tarihinden ÖNCEKİ tüm gönderimler kalıcı olarak silinecek. Emin misiniz?`)) return;
-    const r = await apiCall({action:'deleteSubmissionsBefore', cutoff});
+    const r = await deleteSubmissionsBeforeRemote(cutoff);
     if(r && r.ok){
       State.submissions = await getSubmissionsRemote();
+      State.scans = await getScansRemote();
       toast(`${r.deleted} kayıt silindi.`);
       renderAyarlarTab();
     } else {
@@ -1239,12 +1236,11 @@ function rememberPersonelId(id){
 }
 
 async function submitScan(itemId, label, p){
-  const ok = await apiCall({action:'logScan', data:{
+  return await logScanRemote({
     itemId, checkpointLabel: label,
     personelId: p.id, personelName: p.name,
     tarih: todayStr(), saat: new Date().toISOString()
-  }});
-  return !!(ok && ok.ok);
+  });
 }
 
 function renderScanConfirm(){
