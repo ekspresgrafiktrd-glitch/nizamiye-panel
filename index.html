@@ -988,7 +988,7 @@ function makeQrDataUrl(text, cellSize){
       return qr.createDataURL(cellSize || 6, 8);
     }catch(e){ /* bu boyuta sığmadı, bir sonrakini dene */ }
   }
-  throw new Error('QR üretilemedi: metin çok uzun');
+  throw new Error(`QR üretilemedi: metin çok uzun (${text.length} karakter): ${text}`);
 }
 
 function printAllQrCodes(form){
@@ -1035,6 +1035,7 @@ function showQrPrintView(item){
   try{
     dataUrl = makeQrDataUrl(scanUrl, 6);
   }catch(e){
+    console.error('QR üretme hatası', e);
     toast('QR üretilirken bir hata oluştu: ' + e.message);
     return;
   }
