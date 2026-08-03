@@ -976,24 +976,39 @@ DAE ELEKTRİK"></textarea>
 }
 
 /* ---------- Formdaki tüm QR noktalarını tek sayfada yazdırma ---------- */
-/* Güvenilir, iyi test edilmiş kütüphaneyle (qrcode-generator) veri URL'si üretir */
+/* Güvenilir, iyi test edilmiş kütüphaneyle (qrcode-generator) veri URL'si üretir.
+   NOT: Bu kütüphanenin otomatik boyut algılama (typeNumber=0) özelliği belirli
+   metin uzunluklarında hatalıydı — bunun yerine sığan boyutu elle deniyoruz. */
 function makeQrDataUrl(text, cellSize){
-  const qr = qrcode(0, 'M'); // 0 = otomatik boyut, 'M' = orta hata düzeltme
-  qr.addData(text);
-  qr.make();
-  return qr.createDataURL(cellSize || 6, 8);
+  for(let type=1; type<=40; type++){
+    try{
+      const qr = qrcode(type, 'M');
+      qr.addData(text);
+      qr.make();
+      return qr.createDataURL(cellSize || 6, 8);
+    }catch(e){ /* bu boyuta sığmadı, bir sonrakini dene */ }
+  }
+  throw new Error('QR üretilemedi: metin çok uzun');
 }
 
 function printAllQrCodes(form){
   const qrItems = form.items.filter(i=>i.type==='qr_nokta');
   if(qrItems.length===0){ toast('Bu formda QR kontrol noktası yok.'); return; }
 
-  const tags = qrItems.map(item=>({
-    label: item.label,
-    dataUrl: makeQrDataUrl(`${SITE_URL}?cp=${encodeURIComponent(item.id)}`, 6)
-  }));
+  let tags;
+  try{
+    tags = qrItems.map(item=>({
+      label: item.label,
+      dataUrl: makeQrDataUrl(`${SITE_URL}?cp=${encodeURIComponent(item.id)}`, 6)
+    }));
+  }catch(e){
+    console.error('QR üretme hatası', e);
+    toast('QR üretilirken bir hata oluştu: ' + e.message);
+    return;
+  }
 
   const w = window.open('', '_blank');
+  if(!w){ toast('Pop-up engellendi — tarayıcının adres çubuğundaki pop-up simgesine tıklayıp izin verin.'); return; }
   w.document.write(`
     <html><head><title>${form.title} — QR Etiketleri</title>
     <style>
@@ -1016,7 +1031,13 @@ function printAllQrCodes(form){
 /* ---------- QR kodu görüntüleme / yazdırma (kontrol noktası etiketi) ---------- */
 function showQrPrintView(item){
   const scanUrl = `${SITE_URL}?cp=${encodeURIComponent(item.id)}`;
-  const dataUrl = makeQrDataUrl(scanUrl, 6);
+  let dataUrl;
+  try{
+    dataUrl = makeQrDataUrl(scanUrl, 6);
+  }catch(e){
+    toast('QR üretilirken bir hata oluştu: ' + e.message);
+    return;
+  }
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px;';
   overlay.innerHTML = `
@@ -1036,6 +1057,7 @@ function showQrPrintView(item){
   document.getElementById('qrCloseBtn').onclick = ()=> overlay.remove();
   document.getElementById('qrPrintBtn').onclick = ()=>{
     const w = window.open('', '_blank');
+    if(!w){ toast('Pop-up engellendi — tarayıcının adres çubuğundaki pop-up simgesine tıklayıp izin verin.'); return; }
     w.document.write(`
       <html><head><title>${item.label}</title></head>
       <body style="text-align:center;font-family:sans-serif;padding:40px;">
