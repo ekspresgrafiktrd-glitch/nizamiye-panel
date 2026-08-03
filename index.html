@@ -8,7 +8,7 @@
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
 <meta name="theme-color" content="#12181f">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.0.3/qrcode.min.js"></script>
 <style>
   :root{
     --bg: #f2f3f5;
@@ -976,22 +976,22 @@ DAE ELEKTRİK"></textarea>
 }
 
 /* ---------- Formdaki tüm QR noktalarını tek sayfada yazdırma ---------- */
+/* Güvenilir, iyi test edilmiş kütüphaneyle (qrcode-generator) veri URL'si üretir */
+function makeQrDataUrl(text, cellSize){
+  const qr = qrcode(0, 'M'); // 0 = otomatik boyut, 'M' = orta hata düzeltme
+  qr.addData(text);
+  qr.make();
+  return qr.createDataURL(cellSize || 6, 8);
+}
+
 function printAllQrCodes(form){
   const qrItems = form.items.filter(i=>i.type==='qr_nokta');
   if(qrItems.length===0){ toast('Bu formda QR kontrol noktası yok.'); return; }
 
-  const hidden = document.createElement('div');
-  hidden.style.cssText = 'position:fixed;left:-9999px;top:-9999px;';
-  document.body.appendChild(hidden);
-  const tags = qrItems.map(item=>{
-    const holder = document.createElement('div');
-    hidden.appendChild(holder);
-    new QRCode(holder, {text: `${SITE_URL}?cp=${encodeURIComponent(item.id)}`, width:180, height:180});
-    const canvas = holder.querySelector('canvas');
-    const dataUrl = canvas ? canvas.toDataURL('image/png') : '';
-    return {label: item.label, dataUrl};
-  });
-  hidden.remove();
+  const tags = qrItems.map(item=>({
+    label: item.label,
+    dataUrl: makeQrDataUrl(`${SITE_URL}?cp=${encodeURIComponent(item.id)}`, 6)
+  }));
 
   const w = window.open('', '_blank');
   w.document.write(`
@@ -1000,11 +1000,12 @@ function printAllQrCodes(form){
       body{font-family:sans-serif;}
       .grid{display:flex;flex-wrap:wrap;gap:24px;}
       .tag{width:220px;text-align:center;border:1px dashed #999;padding:16px;page-break-inside:avoid;}
+      .tag img{width:200px;height:200px;}
     </style>
     </head><body>
     <h2>${form.title} — QR Etiketleri</h2>
     <div class="grid">
-      ${tags.map(t=>`<div class="tag"><h3>${t.label}</h3><img src="${t.dataUrl}" width="180" height="180"></div>`).join('')}
+      ${tags.map(t=>`<div class="tag"><h3>${t.label}</h3><img src="${t.dataUrl}"></div>`).join('')}
     </div>
     </body></html>
   `);
@@ -1015,12 +1016,15 @@ function printAllQrCodes(form){
 /* ---------- QR kodu görüntüleme / yazdırma (kontrol noktası etiketi) ---------- */
 function showQrPrintView(item){
   const scanUrl = `${SITE_URL}?cp=${encodeURIComponent(item.id)}`;
+  const dataUrl = makeQrDataUrl(scanUrl, 6);
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px;';
   overlay.innerHTML = `
     <div class="card" style="max-width:360px;width:100%;margin:0;text-align:center;">
       <h2>${item.label || 'Kontrol Noktası'}</h2>
-      <div id="qrImgHolder" style="display:flex;justify-content:center;margin:16px 0;"></div>
+      <div id="qrImgHolder" style="display:flex;justify-content:center;margin:16px 0;">
+        <img src="${dataUrl}" width="200" height="200">
+      </div>
       <p class="hint">Bu etiketi yazdırıp ilgili kontrol noktasına yapıştırın. Personel, telefonunun <b>kendi kamera uygulamasıyla</b> bu etiketi okutacak.</p>
       <div style="display:flex;gap:10px;justify-content:center;">
         <button class="btn" id="qrPrintBtn">Yazdır</button>
@@ -1029,13 +1033,8 @@ function showQrPrintView(item){
     </div>
   `;
   document.body.appendChild(overlay);
-  new QRCode(document.getElementById('qrImgHolder'), {
-    text: scanUrl, width: 200, height: 200
-  });
   document.getElementById('qrCloseBtn').onclick = ()=> overlay.remove();
   document.getElementById('qrPrintBtn').onclick = ()=>{
-    const canvas = document.getElementById('qrImgHolder').querySelector('canvas');
-    const dataUrl = canvas ? canvas.toDataURL('image/png') : '';
     const w = window.open('', '_blank');
     w.document.write(`
       <html><head><title>${item.label}</title></head>
