@@ -1,0 +1,1115 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nizamiye Kontrol Paneli</title>
+<style>
+  :root{
+    --bg: #f2f3f5;
+    --panel: #ffffff;
+    --panel-2: #eef0f3;
+    --line: #dde1e7;
+    --ink: #1b2430;
+    --ink-dim: #667085;
+    --amber: #b96a12;
+    --amber-dim: #f4dfb8;
+    --red: #c8382b;
+    --green: #23875a;
+    --mono: 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
+    --sans: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:var(--sans); min-height:100vh;
+  }
+  ::selection{background:var(--amber-dim);color:var(--ink);}
+
+  /* --- Signature: guard-post signal lamp --- */
+  .lamp{
+    width:10px;height:10px;border-radius:50%;display:inline-block;
+    box-shadow:0 0 8px 2px currentColor;
+  }
+  .lamp.ok{color:var(--green);background:var(--green);}
+  .lamp.warn{color:var(--red);background:var(--red);animation:pulse 1.4s infinite;}
+  .lamp.idle{color:var(--ink-dim);background:var(--ink-dim);}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
+
+  .topbar{
+    display:flex;align-items:center;justify-content:space-between;
+    padding:14px 24px;border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,#ffffff,#f5f6f8);
+    position:sticky;top:0;z-index:20;
+  }
+  .brand{display:flex;align-items:center;gap:10px;font-family:var(--mono);letter-spacing:.5px;}
+  .brand b{color:var(--amber);font-weight:700;}
+  .who{display:flex;align-items:center;gap:12px;font-size:13px;color:var(--ink-dim);}
+  .who button{
+    background:transparent;border:1px solid var(--line);color:var(--ink-dim);
+    padding:6px 12px;border-radius:6px;cursor:pointer;font-size:12px;font-family:var(--sans);
+  }
+  .who button:hover{border-color:var(--amber);color:var(--amber);}
+
+  .wrap{max-width:1080px;margin:0 auto;padding:28px 24px 80px;}
+
+  /* Login */
+  .login-shell{
+    max-width:420px;margin:8vh auto 0;background:var(--panel);
+    border:1px solid var(--line);border-radius:14px;padding:32px;
+  }
+  .login-shell h1{font-size:20px;margin:0 0 4px;}
+  .login-shell p.sub{color:var(--ink-dim);font-size:13px;margin:0 0 24px;}
+  .role-toggle{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-bottom:20px;}
+  .role-toggle button{
+    flex:1;padding:10px;background:var(--panel-2);color:var(--ink-dim);border:none;
+    cursor:pointer;font-family:var(--mono);font-size:12px;letter-spacing:.5px;
+  }
+  .role-toggle button.active{background:var(--amber);color:#fff8ee;font-weight:700;}
+
+  label{display:block;font-size:12px;color:var(--ink-dim);margin-bottom:6px;font-family:var(--mono);}
+  select, input[type=password], input[type=text], input[type=date], textarea{
+    width:100%;background:var(--panel-2);border:1px solid var(--line);color:var(--ink);
+    padding:10px 12px;border-radius:8px;font-size:14px;font-family:var(--sans);margin-bottom:16px;
+  }
+  select:focus, input:focus, textarea:focus{outline:2px solid var(--amber);outline-offset:1px;border-color:var(--amber);}
+
+  .btn{
+    display:inline-flex;align-items:center;gap:8px;justify-content:center;
+    background:var(--amber);color:#fff8ee;border:none;padding:11px 18px;
+    border-radius:8px;font-weight:700;font-size:14px;cursor:pointer;font-family:var(--sans);
+  }
+  .btn:hover{filter:brightness(1.08);}
+  .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--ink);font-weight:600;}
+  .btn.ghost:hover{border-color:var(--amber);color:var(--amber);}
+  .btn.danger{background:var(--red);color:#fff5f4;}
+  .btn.small{padding:6px 12px;font-size:12px;border-radius:6px;}
+  .err{color:var(--red);font-size:13px;margin:-8px 0 16px;min-height:16px;}
+
+  /* Cards / sections */
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px;margin-bottom:20px;}
+  .card h2{margin:0 0 4px;font-size:16px;}
+  .card p.hint{color:var(--ink-dim);font-size:13px;margin:0 0 18px;}
+
+  .tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:22px;overflow-x:auto;-webkit-overflow-scrolling:touch;}
+  .tabs button{
+    background:none;border:none;color:var(--ink-dim);padding:10px 16px;cursor:pointer;
+    font-family:var(--mono);font-size:12.5px;letter-spacing:.3px;border-bottom:2px solid transparent;
+    white-space:nowrap;flex-shrink:0;
+  }
+  .tabs button.active{color:var(--amber);border-bottom-color:var(--amber);}
+
+  .table-scroll{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  .table-scroll table{min-width:560px;}
+  th{text-align:left;color:var(--ink-dim);font-family:var(--mono);font-weight:500;font-size:11px;
+     text-transform:uppercase;letter-spacing:.4px;padding:8px 10px;border-bottom:1px solid var(--line);}
+  td{padding:10px;border-bottom:1px solid var(--line);vertical-align:top;}
+  tr:hover td{background:rgba(20,30,45,.03);}
+
+  .badge{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:20px;font-size:11.5px;font-weight:700;font-family:var(--mono);}
+  .badge.ok{background:rgba(35,135,90,.12);color:var(--green);}
+  .badge.warn{background:rgba(200,56,43,.12);color:var(--red);}
+
+  .item-row{display:flex;align-items:center;justify-content:space-between;gap:12px;
+    padding:14px 0;border-bottom:1px solid var(--line);}
+  .item-row:last-child{border-bottom:none;}
+  .item-row .lbl{font-size:14px;}
+  .ans-time{font-family:var(--mono);font-size:11px;color:var(--ink-dim);font-weight:400;white-space:nowrap;}
+  .choice{display:flex;gap:6px;}
+  .choice button{
+    padding:7px 14px;border-radius:7px;border:1px solid var(--line);background:var(--panel-2);
+    color:var(--ink-dim);cursor:pointer;font-size:12.5px;font-weight:700;font-family:var(--mono);
+  }
+  .choice button.sel-evet.on{background:rgba(35,135,90,.14);border-color:var(--green);color:var(--green);}
+  .choice button.sel-hayir.on{background:rgba(200,56,43,.14);border-color:var(--red);color:var(--red);}
+
+  .empty{color:var(--ink-dim);font-size:13px;text-align:center;padding:40px 0;font-family:var(--mono);}
+
+  .form-list-item{
+    display:flex;align-items:center;justify-content:space-between;padding:14px 16px;
+    border:1px solid var(--line);border-radius:10px;margin-bottom:10px;background:var(--panel-2);
+    cursor:pointer;
+  }
+  .form-list-item:hover{border-color:var(--amber);}
+  .form-list-item .meta{font-size:12px;color:var(--ink-dim);font-family:var(--mono);margin-top:2px;}
+
+  .builder-row{display:flex;gap:8px;align-items:center;margin-bottom:8px;}
+  .builder-row input[type=text]{margin:0;flex:1;}
+  .builder-row select{margin:0;width:130px;}
+
+  .flex-between{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px;}
+  .filters{display:flex;gap:10px;flex-wrap:wrap;}
+  .filters > div{min-width:150px;}
+  .filters label{margin-bottom:4px;}
+  .filters select, .filters input{margin-bottom:0;}
+
+  .toast{
+    position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
+    background:var(--panel-2);border:1px solid var(--amber);color:var(--ink);
+    padding:12px 20px;border-radius:8px;font-size:13px;box-shadow:0 8px 24px rgba(20,30,45,.15);
+    opacity:0;pointer-events:none;transition:opacity .25s, transform .25s;z-index:100;
+  }
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(-6px);}
+
+  @media (max-width:640px){
+    .topbar{padding:12px 14px;flex-wrap:wrap;gap:8px;}
+    .brand{font-size:13px;}
+    .wrap{padding:16px 12px 60px;}
+    .card{padding:16px;}
+    .login-shell{padding:22px;margin-top:4vh;max-width:100%;}
+    .item-row{flex-direction:column;align-items:flex-start;gap:10px;}
+    .choice{width:100%;}
+    .choice button{flex:1;padding:10px 8px;}
+    .form-list-item{flex-direction:column;align-items:flex-start;gap:10px;}
+    .form-list-item > div:last-child{width:100%;display:flex;flex-wrap:wrap;gap:8px;}
+    .builder-row{flex-wrap:wrap;}
+    .builder-row select{width:100%;}
+    .filters{flex-direction:column;align-items:stretch;}
+    .filters > div{min-width:0;width:100%;}
+    .flex-between{flex-direction:column;align-items:stretch;}
+    .flex-between .btn{width:100%;}
+    .table-scroll table{min-width:480px;}
+    .who{gap:8px;}
+    .who button{padding:6px 9px;font-size:11px;}
+  }
+  @media (max-width:400px){
+    .login-shell{padding:18px;}
+    .brand{font-size:11.5px;}
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">▮▮▮ <b>NİZAMİYE</b> KONTROL PANELİ</div>
+  <div class="who" style="display:flex;">
+    <span id="whoLabel"></span>
+    <button id="settingsBtn" title="Bağlantı Ayarları">⚙ Bağlantı</button>
+    <button id="logoutBtn" style="display:none;">Çıkış</button>
+  </div>
+</div>
+
+<div class="wrap" id="app"></div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============================================================
+   BACKEND API LAYER
+   Bu panel artık gerçek, kalıcı bir veri kaynağına yazıyor:
+   ücretsiz bir Google Apps Script Web App (bkz. kurulum ekranı).
+   API adresi bu cihazda bir kere ayarlanır ve localStorage'da tutulur
+   (bu sadece "hangi adrese bağlanılacak" bilgisidir; gerçek veri
+   Google Sheets'te, tüm cihazlar için ortak şekilde durur).
+   ============================================================ */
+/* ▼▼▼ BURAYI DÜZENLEYİN ▼▼▼
+   Google Apps Script dağıtımınızdan aldığınız URL'yi tırnakların
+   İÇİNE yapıştırın (https://script.google.com/macros/s/..../exec).
+   Bunu yaptıktan sonra bu dosyayı kime gönderirseniz gönderin,
+   hiçbir ayar yapmadan direkt çalışır.                            */
+const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbxXYnGJCkIMhEALDna3vMeFIbexE-SQszt1A-bxE60SZ7W5a6qvOvEwykTQa2be5NmiDQ/exec';
+/* ▲▲▲ SADECE YUKARIDAKİ SATIRI DEĞİŞTİRİN ▲▲▲ */
+
+let _memApiUrl = '';
+const CONFIG = {
+  get apiUrl(){
+    try{ return localStorage.getItem('guv_api_url') || DEFAULT_API_URL; }
+    catch(e){ return _memApiUrl || DEFAULT_API_URL; }
+  },
+  set apiUrl(v){
+    _memApiUrl = v;
+    try{ localStorage.setItem('guv_api_url', v); }catch(e){ /* bu tarayıcı bağlamında localStorage yok, sorun değil */ }
+  }
+};
+
+async function apiCallOnce(payload, timeoutMs){
+  if(!CONFIG.apiUrl) return null;
+  try{
+    const fetchPromise = fetch(CONFIG.apiUrl, {
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=utf-8'}, // preflight tetiklemeyen "simple request"
+      body: JSON.stringify(payload)
+    });
+    const timeoutPromise = new Promise((_, reject)=>{
+      setTimeout(()=>reject(new Error('zaman aşımı')), timeoutMs || 20000);
+    });
+    const res = await Promise.race([fetchPromise, timeoutPromise]);
+    return await res.json();
+  }catch(e){
+    console.error('API hatası', e);
+    return null;
+  }
+}
+function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+/* Zayıf sinyalli konumlarda (nizamiye vb.) tek seferlik bir ağ hatası yüzünden
+   veri kaybolmasın diye, başarısız istekleri kısa aralıklarla birkaç kez tekrar dener. */
+async function apiCall(payload, timeoutMs){
+  for(let attempt=1; attempt<=3; attempt++){
+    const r = await apiCallOnce(payload, timeoutMs);
+    if(r !== null) return r;
+    if(attempt < 3) await sleep(attempt * 1200); // 1.2sn, sonra 2.4sn bekleyip tekrar dene
+  }
+  return null;
+}
+
+async function kvGet(key, fallback){
+  const r = await apiCall({action:'getKV', key});
+  if(!r || r.value === null || r.value === undefined) return fallback;
+  try{ return JSON.parse(r.value); }catch(e){ return fallback; }
+}
+async function kvSet(key, value){
+  await apiCall({action:'setKV', key, value: JSON.stringify(value)});
+}
+async function getSubmissionsRemote(){
+  const r = await apiCall({action:'getSubmissions'});
+  return Array.isArray(r) ? r : [];
+}
+async function addSubmissionRemote(sub){
+  const r = await apiCall({action:'addSubmission', data: sub});
+  return !!(r && r.ok);
+}
+async function apiPing(){
+  const r = await apiCall({action:'getKV', key:'__ping__'});
+  return r !== null;
+}
+
+function uid(prefix){ return prefix + '_' + Math.random().toString(36).slice(2,9); }
+function todayStr(){
+  const d = new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+function trDate(iso){
+  const [y,m,d] = iso.split('-');
+  return `${d}.${m}.${y}`;
+}
+
+/* ============================================================
+   CEVAP ŞEKLİ: her madde {v: değer, t: işaretlenme zamanı(ISO)} olarak saklanır.
+   Eski kayıtlarda düz string olabilir; ikisini de destekle.
+   ============================================================ */
+function answerValue(a){
+  if(a && typeof a === 'object') return a.v;
+  return a || '';
+}
+function answerTime(a){
+  if(a && typeof a === 'object') return a.t || null;
+  return null;
+}
+function formatTime(iso){
+  if(!iso) return '';
+  try{
+    return new Date(iso).toLocaleTimeString('tr-TR', {hour:'2-digit', minute:'2-digit'});
+  }catch(e){ return ''; }
+}
+
+/* ============================================================
+   SEED DATA  (mirrors the original "Gece Güvenlik Kontrol Formu")
+   ============================================================ */
+const SEED_PERSONEL = [
+  {id:'p1', name:'Ahmet YILMAZ', pin:'1111'},
+  {id:'p2', name:'Mehmet KAYA', pin:'2222'},
+  {id:'p3', name:'Ali DEMİR', pin:'3333'},
+];
+
+function seedGuvenlikFormu(){
+  const items = [];
+  items.push({id:uid('i'), type:'baslik', label:'Vardiya Başlangıç Kontrolü'});
+  ['Üniforma eksiksiz ve temiz','Kimlik kartı takılı','El feneri kontrol edildi',
+   'Anahtarlar teslim alındı','Kamera sistemi kontrol edildi','Alarm sistemi kontrol edildi'
+  ].forEach(l => items.push({id:uid('i'), type:'evethayir', label:l}));
+
+  items.push({id:uid('i'), type:'baslik', label:'Saatlik Devriye Kontrolü'});
+  ['19:00','20:00','21:00','22:00','23:00','00:00','01:00','02:00','03:00','04:00','05:00','06:00','07:00','08:00']
+   .forEach(saat => {
+      items.push({id:uid('i'), type:'evethayir', label:`${saat} — Tur yapıldı`});
+      items.push({id:uid('i'), type:'evethayir', label:`${saat} — Nokta okutuldu`});
+   });
+
+  items.push({id:uid('i'), type:'baslik', label:'Günlük Yapılacak Görevler'});
+  ['Giriş ve çıkış kapıları kontrol edildi','Depolar kontrol edildi','Otopark kontrol edildi',
+   'Fabrika çevresi kontrol edildi','Kamera kayıtları kontrol edildi','Peyzaj sulaması yapıldı (gerekiyorsa)',
+   'Çevre temizliği yapıldı','Bahçe düzeni kontrol edildi','Şüpheli durum bulunmadı','Bulunan arızalar raporlandı'
+  ].forEach(l => items.push({id:uid('i'), type:'evethayir', label:l}));
+
+  items.push({id:uid('i'), type:'not', label:'Olay / Arıza / Notlar'});
+
+  return {id:uid('f'), title:'Gece Güvenlik Kontrol Formu', active:true, items};
+}
+
+/* ============================================================
+   GLOBAL STATE
+   ============================================================ */
+const State = {
+  personel: [],
+  forms: [],
+  adminPin: '1234',
+  submissions: [],
+  session: null,   // {role:'personel'|'admin', personelId?, name?}
+};
+
+async function loadAll(){
+  const r = await apiCall({action:'init'}, 25000);
+  if(r && r.personel && r.forms){
+    State.personel = r.personel;
+    State.forms = r.forms;
+    State.adminPin = r.adminPin || '1234';
+    State.submissions = r.submissions || [];
+    return true;
+  }
+  // API'ye ulaşılamadı: yalnızca bu oturum için yerel varsayılanlarla devam et (kaydetmez)
+  State.personel = SEED_PERSONEL;
+  State.forms = [seedGuvenlikFormu()];
+  State.adminPin = '1234';
+  State.submissions = [];
+  return false;
+}
+
+function toast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(()=>t.classList.remove('show'), 2400);
+}
+
+/* ============================================================
+   ROUTER
+   ============================================================ */
+const app = document.getElementById('app');
+const whoLabel = document.getElementById('whoLabel');
+const logoutBtn = document.getElementById('logoutBtn');
+logoutBtn.addEventListener('click', ()=>{
+  State.session = null;
+  render();
+});
+document.getElementById('settingsBtn').addEventListener('click', openSettingsDialog);
+
+function render(){
+  if(!State.session){
+    whoLabel.textContent = '';
+    logoutBtn.style.display = 'none';
+    renderLogin();
+  } else if(State.session.role === 'personel'){
+    logoutBtn.style.display = 'inline-flex';
+    whoLabel.textContent = `👤 ${State.session.name}`;
+    renderPersonelPanel();
+  } else {
+    logoutBtn.style.display = 'inline-flex';
+    whoLabel.textContent = `🛠 Yönetici`;
+    renderAdminPanel();
+  }
+}
+
+let loginRole = 'personel';
+
+function renderLogin(){
+  app.innerHTML = `
+    <div class="login-shell">
+      <h1>Giriş Yap</h1>
+      <p class="sub">Nizamiye vardiya kontrol formlarına ve yönetim paneline erişim.</p>
+      <div class="role-toggle">
+        <button id="roleP" class="${loginRole==='personel'?'active':''}">PERSONEL</button>
+        <button id="roleA" class="${loginRole==='admin'?'active':''}">YÖNETİCİ</button>
+      </div>
+      <div id="loginFields"></div>
+      <div class="err" id="loginErr"></div>
+      <button class="btn" id="loginBtn" style="width:100%;">Giriş Yap</button>
+    </div>
+  `;
+  document.getElementById('roleP').onclick = ()=>{ loginRole='personel'; renderLogin(); };
+  document.getElementById('roleA').onclick = ()=>{ loginRole='admin'; renderLogin(); };
+
+  const fields = document.getElementById('loginFields');
+  if(loginRole === 'personel'){
+    fields.innerHTML = `
+      <label>Personel</label>
+      <select id="loginPersonel">
+        ${State.personel.map(p=>`<option value="${p.id}">${p.name}</option>`).join('')}
+      </select>
+      <label>PIN</label>
+      <input type="password" id="loginPin" placeholder="••••" maxlength="8">
+    `;
+  } else {
+    fields.innerHTML = `
+      <label>Yönetici Şifresi</label>
+      <input type="password" id="loginPin" placeholder="••••" maxlength="12">
+    `;
+  }
+
+  document.getElementById('loginBtn').onclick = ()=>{
+    const err = document.getElementById('loginErr');
+    const pin = document.getElementById('loginPin').value.trim();
+    if(loginRole === 'personel'){
+      const sel = document.getElementById('loginPersonel');
+      const p = State.personel.find(x=>x.id===sel.value);
+      if(!p){ err.textContent = 'Personel bulunamadı.'; return; }
+      if(pin !== p.pin){ err.textContent = 'PIN hatalı.'; return; }
+      State.session = {role:'personel', personelId:p.id, name:p.name};
+      render();
+    } else {
+      if(pin !== State.adminPin){ err.textContent = 'Şifre hatalı.'; return; }
+      State.session = {role:'admin'};
+      render();
+    }
+  };
+}
+
+/* ============================================================
+   PERSONEL PANEL
+   ============================================================ */
+let personelOpenFormId = null;
+
+function findSubmission(formId, personelId, tarih){
+  return State.submissions.find(s => s.formId===formId && s.personelId===personelId && s.tarih===tarih);
+}
+
+function renderPersonelPanel(){
+  if(personelOpenFormId){
+    renderFillForm(personelOpenFormId);
+    return;
+  }
+  const activeForms = State.forms.filter(f=>f.active);
+  const tarih = todayStr();
+
+  app.innerHTML = `
+    <div class="card">
+      <h2>Bugünün Formları — ${trDate(tarih)}</h2>
+      <p class="hint">Doldurmak istediğiniz formu seçin. Daha önce gönderdiyseniz, açıp güncelleyebilirsiniz.</p>
+      <div id="formList"></div>
+    </div>
+  `;
+  const listEl = document.getElementById('formList');
+  if(activeForms.length === 0){
+    listEl.innerHTML = `<div class="empty">Şu anda size atanmış aktif form yok.</div>`;
+    return;
+  }
+  listEl.innerHTML = activeForms.map(f=>{
+    const sub = findSubmission(f.id, State.session.personelId, tarih);
+    return `
+      <div class="form-list-item" data-id="${f.id}">
+        <div>
+          <div>${f.title}</div>
+          <div class="meta">${f.items.filter(i=>i.type!=='baslik').length} madde</div>
+        </div>
+        <div>
+          ${sub ? '<span class="badge ok"><span class="lamp ok"></span> GÖNDERİLDİ</span>' : '<span class="badge warn"><span class="lamp warn"></span> BEKLİYOR</span>'}
+        </div>
+      </div>
+    `;
+  }).join('');
+  listEl.querySelectorAll('.form-list-item').forEach(el=>{
+    el.onclick = ()=>{ personelOpenFormId = el.dataset.id; render(); };
+  });
+}
+
+function renderFillForm(formId){
+  const f = State.forms.find(x=>x.id===formId);
+  const tarih = todayStr();
+  const existing = findSubmission(formId, State.session.personelId, tarih);
+  const answers = existing ? JSON.parse(JSON.stringify(existing.answers)) : {};
+  const recordId = existing ? existing.id : uid('s');
+
+  app.innerHTML = `
+    <button class="btn ghost small" id="backBtn">← Form Listesi</button>
+    <div class="card" style="margin-top:14px;">
+      <h2>${f.title}</h2>
+      <p class="hint">${trDate(tarih)} · ${State.session.name}</p>
+      <div id="saveStatus" style="font-size:12px;color:var(--ink-dim);font-family:var(--mono);margin-bottom:10px;min-height:16px;"></div>
+      <div id="itemsWrap"></div>
+      <div id="doneBanner" style="display:none;margin-top:16px;padding:14px 16px;border-radius:8px;background:rgba(35,135,90,.12);border:1px solid var(--green);color:var(--green);font-weight:700;"></div>
+      <div style="margin-top:18px;display:flex;gap:10px;">
+        <button class="btn" id="submitBtn">Formu Gönder</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('backBtn').onclick = ()=>{ personelOpenFormId=null; render(); };
+
+  const statusEl = document.getElementById('saveStatus');
+  let saveTimer = null;
+  function scheduleAutosave(){
+    statusEl.textContent = '● Kaydediliyor…';
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(async ()=>{
+      const record = {
+        id: recordId, formId: f.id, formTitle: f.title,
+        personelId: State.session.personelId, personelName: State.session.name,
+        tarih, answers, olusturulma: new Date().toISOString(),
+      };
+      const ok = await addSubmissionRemote(record);
+      if(ok){
+        if(existing){ State.submissions = State.submissions.map(s=>s.id===recordId?record:s); }
+        else if(!State.submissions.find(s=>s.id===recordId)){ State.submissions.push(record); }
+        else { State.submissions = State.submissions.map(s=>s.id===recordId?record:s); }
+        statusEl.textContent = '✓ Otomatik kaydedildi — sekmeyi kapatıp tekrar açsanız bile kaldığınız yerden devam eder.';
+      } else {
+        statusEl.textContent = '⚠ Kaydedilemedi, bağlantı sorunu olabilir. İnternet bağlantınızı kontrol edin.';
+      }
+    }, 900);
+  }
+
+  const wrap = document.getElementById('itemsWrap');
+  function timeTag(id){
+    const t = answerTime(answers[id]);
+    return t ? `<span class="ans-time" data-time-for="${id}">🕐 ${formatTime(t)}</span>` : `<span class="ans-time" data-time-for="${id}"></span>`;
+  }
+
+  wrap.innerHTML = f.items.map(item=>{
+    if(item.type === 'baslik'){
+      return `<div style="margin:18px 0 6px;font-family:var(--mono);font-size:12px;color:var(--amber);text-transform:uppercase;letter-spacing:.5px;">${item.label}</div>`;
+    }
+    if(item.type === 'not'){
+      const val = answerValue(answers[item.id]);
+      return `
+        <div class="item-row" style="flex-direction:column;align-items:stretch;" data-id="${item.id}">
+          <label style="margin-bottom:8px;display:flex;justify-content:space-between;">${item.label} ${timeTag(item.id)}</label>
+          <textarea rows="3" data-id="${item.id}" class="note-input" placeholder="Varsa notunuzu yazın...">${val||''}</textarea>
+        </div>`;
+    }
+    // evethayir
+    const cur = answerValue(answers[item.id]);
+    return `
+      <div class="item-row" data-id="${item.id}">
+        <div class="lbl">${item.label}<br>${timeTag(item.id)}</div>
+        <div class="choice">
+          <button class="sel-evet ${cur==='EVET'?'on':''}" data-val="EVET">EVET</button>
+          <button class="sel-hayir ${cur==='HAYIR'?'on':''}" data-val="HAYIR">HAYIR</button>
+        </div>
+      </div>`;
+  }).join('');
+
+  wrap.querySelectorAll('.item-row[data-id] .choice button').forEach(btn=>{
+    btn.onclick = ()=>{
+      const row = btn.closest('.item-row');
+      const id = row.dataset.id;
+      const now = new Date().toISOString();
+      answers[id] = {v: btn.dataset.val, t: now};
+      row.querySelectorAll('.choice button').forEach(b=>b.classList.remove('on'));
+      btn.classList.add('on');
+      const tEl = row.querySelector(`[data-time-for="${id}"]`);
+      if(tEl) tEl.textContent = `🕐 ${formatTime(now)}`;
+      scheduleAutosave();
+    };
+  });
+  wrap.querySelectorAll('.note-input').forEach(ta=>{
+    ta.oninput = ()=>{
+      const id = ta.dataset.id;
+      const now = new Date().toISOString();
+      answers[id] = {v: ta.value, t: now};
+      const row = ta.closest('.item-row');
+      const tEl = row.querySelector(`[data-time-for="${id}"]`);
+      if(tEl) tEl.textContent = ta.value.trim() ? `🕐 ${formatTime(now)}` : '';
+      scheduleAutosave();
+    };
+  });
+
+  document.getElementById('submitBtn').onclick = async ()=>{
+    const btn = document.getElementById('submitBtn');
+    const record = {
+      id: recordId, formId: f.id, formTitle: f.title,
+      personelId: State.session.personelId, personelName: State.session.name,
+      tarih, answers, olusturulma: new Date().toISOString(),
+    };
+    btn.disabled = true;
+    btn.textContent = 'Gönderiliyor…';
+    const ok = await addSubmissionRemote(record);
+    btn.disabled = false;
+    btn.textContent = 'Formu Gönder';
+    const banner = document.getElementById('doneBanner');
+    if(!ok){
+      toast('⚠ Form KAYDEDİLEMEDİ — bağlantı sorunu olabilir. Lütfen tekrar deneyin.');
+      banner.style.display = 'block';
+      banner.style.background = 'rgba(200,56,43,.12)';
+      banner.style.borderColor = 'var(--red)';
+      banner.style.color = 'var(--red)';
+      banner.textContent = '⚠ Form kaydedilemedi. Lütfen tekrar deneyin.';
+      return;
+    }
+    if(existing || State.submissions.find(s=>s.id===recordId)){
+      State.submissions = State.submissions.map(s=>s.id===recordId?record:s);
+    } else {
+      State.submissions.push(record);
+    }
+    toast('✓ Form gönderildi.');
+    banner.style.display = 'block';
+    banner.textContent = `✓ Form gönderildi — ${formatTime(new Date().toISOString())}`;
+    setTimeout(()=>{ personelOpenFormId = null; render(); }, 1400);
+  };
+}
+
+/* ============================================================
+   ADMIN PANEL
+   ============================================================ */
+let adminTab = 'gonderimler';
+
+function renderAdminPanel(){
+  app.innerHTML = `
+    <div class="tabs">
+      <button data-t="gonderimler" class="${adminTab==='gonderimler'?'active':''}">GÖNDERİMLER</button>
+      <button data-t="formlar" class="${adminTab==='formlar'?'active':''}">FORMLAR</button>
+      <button data-t="personel" class="${adminTab==='personel'?'active':''}">PERSONEL</button>
+      <button data-t="ayarlar" class="${adminTab==='ayarlar'?'active':''}">AYARLAR</button>
+    </div>
+    <div id="adminBody"></div>
+  `;
+  app.querySelectorAll('.tabs button').forEach(b=>{
+    b.onclick = ()=>{ adminTab = b.dataset.t; renderAdminPanel(); };
+  });
+  if(adminTab === 'gonderimler') renderGonderimlerTab();
+  else if(adminTab === 'formlar') renderFormlarTab();
+  else if(adminTab === 'personel') renderPersonelTab();
+  else renderAyarlarTab();
+}
+
+function submissionStatus(sub){
+  const form = State.forms.find(f=>f.id===sub.formId);
+  let hayirCount = 0, note = '';
+  if(form){
+    form.items.forEach(item=>{
+      const v = answerValue(sub.answers[item.id]);
+      if(item.type==='evethayir' && v==='HAYIR') hayirCount++;
+      if(item.type==='not' && (v||'').trim()) note += (v+' ');
+    });
+  }
+  const status = (hayirCount>0 || note.trim()) ? 'DİKKAT' : 'TAMAM';
+  return {hayirCount, note: note.trim(), status};
+}
+
+let gFilterDate = '', gFilterPersonel = '', gFilterForm = '', gExpanded = null;
+
+function renderGonderimlerTab(){
+  const body = document.getElementById('adminBody');
+  body.innerHTML = `
+    <div class="card">
+      <div class="flex-between">
+        <h2 style="margin:0;">Gönderilen Formlar</h2>
+      </div>
+      <div class="filters" style="margin-bottom:18px;">
+        <div><label>Tarih</label><input type="date" id="fDate" value="${gFilterDate}"></div>
+        <div><label>Personel</label>
+          <select id="fPersonel">
+            <option value="">Tümü</option>
+            ${State.personel.map(p=>`<option value="${p.id}" ${gFilterPersonel===p.id?'selected':''}>${p.name}</option>`).join('')}
+          </select>
+        </div>
+        <div><label>Form</label>
+          <select id="fForm">
+            <option value="">Tümü</option>
+            ${State.forms.map(f=>`<option value="${f.id}" ${gFilterForm===f.id?'selected':''}>${f.title}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div id="subTableWrap"></div>
+    </div>
+  `;
+  document.getElementById('fDate').oninput = e=>{ gFilterDate=e.target.value; renderGonderimlerTab(); };
+  document.getElementById('fPersonel').onchange = e=>{ gFilterPersonel=e.target.value; renderGonderimlerTab(); };
+  document.getElementById('fForm').onchange = e=>{ gFilterForm=e.target.value; renderGonderimlerTab(); };
+
+  let list = [...State.submissions].sort((a,b)=> b.tarih.localeCompare(a.tarih) || b.olusturulma.localeCompare(a.olusturulma));
+  if(gFilterDate) list = list.filter(s=>s.tarih===gFilterDate);
+  if(gFilterPersonel) list = list.filter(s=>s.personelId===gFilterPersonel);
+  if(gFilterForm) list = list.filter(s=>s.formId===gFilterForm);
+
+  const tableWrap = document.getElementById('subTableWrap');
+  if(list.length===0){
+    tableWrap.innerHTML = `<div class="empty">Kayıt bulunamadı.</div>`;
+    return;
+  }
+  tableWrap.innerHTML = `
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>Tarih</th><th>Personel</th><th>Form</th><th>Eksik (Hayır)</th><th>Durum</th><th></th></tr></thead>
+      <tbody>
+        ${list.map(s=>{
+          const st = submissionStatus(s);
+          return `
+          <tr>
+            <td>${trDate(s.tarih)}</td>
+            <td>${s.personelName}</td>
+            <td>${s.formTitle}</td>
+            <td>${st.hayirCount}</td>
+            <td>${st.status==='TAMAM' ? '<span class="badge ok"><span class="lamp ok"></span> TAMAM</span>' : '<span class="badge warn"><span class="lamp warn"></span> DİKKAT</span>'}</td>
+            <td><button class="btn ghost small" data-id="${s.id}">Detay</button></td>
+          </tr>
+          ${gExpanded===s.id ? `<tr><td colspan="6">${renderSubmissionDetail(s)}</td></tr>` : ''}
+          `;
+        }).join('')}
+      </tbody>
+    </table>
+    </div>
+  `;
+  tableWrap.querySelectorAll('button[data-id]').forEach(b=>{
+    b.onclick = ()=>{ gExpanded = (gExpanded===b.dataset.id) ? null : b.dataset.id; renderGonderimlerTab(); };
+  });
+}
+
+function renderSubmissionDetail(sub){
+  const form = State.forms.find(f=>f.id===sub.formId);
+  if(!form) return '<div class="empty">Form artık mevcut değil.</div>';
+  return `
+    <div style="padding:6px 4px;">
+      ${form.items.map(item=>{
+        if(item.type==='baslik') return `<div style="margin:12px 0 4px;font-family:var(--mono);font-size:11px;color:var(--amber);text-transform:uppercase;">${item.label}</div>`;
+        const val = answerValue(sub.answers[item.id]);
+        const t = answerTime(sub.answers[item.id]);
+        const timeStr = t ? `<span class="ans-time">🕐 ${formatTime(t)}</span>` : '';
+        if(item.type==='not'){
+          return `<div style="font-size:13px;margin-bottom:6px;display:flex;justify-content:space-between;gap:10px;"><span><b>${item.label}:</b> ${val && val.trim() ? val : '<span style="color:var(--ink-dim);">(boş)</span>'}</span>${timeStr}</div>`;
+        }
+        const cls = val==='HAYIR' ? 'color:var(--red);font-weight:700;' : (val==='EVET' ? 'color:var(--green);font-weight:700;' : 'color:var(--ink-dim);');
+        return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:13px;padding:4px 0;border-bottom:1px dashed var(--line);">
+          <span>${item.label}</span>
+          <span style="display:flex;align-items:center;gap:8px;">${timeStr}<span style="${cls}">${val||'—'}</span></span>
+        </div>`;
+      }).join('')}
+    </div>
+  `;
+}
+
+/* ---------- FORMLAR TAB ---------- */
+let formBuilderState = null; // {id?, title, items:[{id,type,label}]}
+
+function newBlankBuilder(){
+  return {id:null, title:'', items:[{id:uid('i'), type:'evethayir', label:''}]};
+}
+
+function renderFormlarTab(){
+  const body = document.getElementById('adminBody');
+  if(formBuilderState){
+    renderFormBuilder(body);
+    return;
+  }
+  body.innerHTML = `
+    <div class="card">
+      <div class="flex-between">
+        <h2 style="margin:0;">Formlar</h2>
+        <button class="btn small" id="newFormBtn">+ Yeni Form Oluştur</button>
+      </div>
+      <p class="hint">Personelin gördüğü formlar burada yönetilir. Pasif formlar personel ekranında görünmez.</p>
+      <div id="formsListWrap"></div>
+    </div>
+  `;
+  document.getElementById('newFormBtn').onclick = ()=>{ formBuilderState = newBlankBuilder(); renderFormlarTab(); };
+
+  const wrap = document.getElementById('formsListWrap');
+  if(State.forms.length===0){
+    wrap.innerHTML = `<div class="empty">Henüz form yok.</div>`;
+    return;
+  }
+  wrap.innerHTML = State.forms.map(f=>`
+    <div class="form-list-item" style="cursor:default;">
+      <div>
+        <div>${f.title}</div>
+        <div class="meta">${f.items.filter(i=>i.type!=='baslik').length} madde</div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <span class="badge ${f.active?'ok':'warn'}">${f.active?'AKTİF':'PASİF'}</span>
+        <button class="btn ghost small" data-act="toggle" data-id="${f.id}">${f.active?'Pasif Yap':'Aktif Yap'}</button>
+        <button class="btn ghost small" data-act="edit" data-id="${f.id}">Düzenle</button>
+        <button class="btn danger small" data-act="del" data-id="${f.id}">Sil</button>
+      </div>
+    </div>
+  `).join('');
+
+  wrap.querySelectorAll('button[data-act]').forEach(b=>{
+    b.onclick = async ()=>{
+      const f = State.forms.find(x=>x.id===b.dataset.id);
+      if(b.dataset.act==='toggle'){
+        f.active = !f.active;
+        await kvSet('guv-formlar', State.forms);
+        renderFormlarTab();
+      } else if(b.dataset.act==='edit'){
+        formBuilderState = {id:f.id, title:f.title, items: f.items.map(i=>({...i}))};
+        renderFormlarTab();
+      } else if(b.dataset.act==='del'){
+        if(confirm(`"${f.title}" formu silinsin mi? Bu forma ait geçmiş gönderimler kayıt olarak kalır.`)){
+          State.forms = State.forms.filter(x=>x.id!==f.id);
+          await kvSet('guv-formlar', State.forms);
+          renderFormlarTab();
+        }
+      }
+    };
+  });
+}
+
+function renderFormBuilder(body){
+  const st = formBuilderState;
+  body.innerHTML = `
+    <div class="card">
+      <h2>${st.id ? 'Formu Düzenle' : 'Yeni Form Oluştur'}</h2>
+      <label>Form Başlığı</label>
+      <input type="text" id="fTitle" value="${st.title}" placeholder="Örn: Gündüz Vardiya Kontrol Formu">
+      <label>Maddeler</label>
+      <div id="itemsBuilder"></div>
+      <button class="btn ghost small" id="addItemBtn" style="margin-top:8px;">+ Madde Ekle</button>
+      <div style="margin-top:22px;display:flex;gap:10px;">
+        <button class="btn" id="saveFormBtn">Kaydet</button>
+        <button class="btn ghost" id="cancelFormBtn">Vazgeç</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('fTitle').oninput = e=>{ st.title = e.target.value; };
+  document.getElementById('cancelFormBtn').onclick = ()=>{ formBuilderState=null; renderFormlarTab(); };
+  document.getElementById('addItemBtn').onclick = ()=>{
+    st.items.push({id:uid('i'), type:'evethayir', label:''});
+    renderFormBuilder(body);
+  };
+
+  const itemsWrap = document.getElementById('itemsBuilder');
+  itemsWrap.innerHTML = st.items.map((item,idx)=>`
+    <div class="builder-row" data-idx="${idx}">
+      <select class="itype">
+        <option value="evethayir" ${item.type==='evethayir'?'selected':''}>Evet/Hayır</option>
+        <option value="not" ${item.type==='not'?'selected':''}>Not (serbest metin)</option>
+        <option value="baslik" ${item.type==='baslik'?'selected':''}>Bölüm Başlığı</option>
+      </select>
+      <input type="text" class="ilabel" value="${item.label}" placeholder="Madde metni">
+      <button class="btn danger small" data-remove="${idx}">Sil</button>
+    </div>
+  `).join('');
+  itemsWrap.querySelectorAll('.builder-row').forEach(row=>{
+    const idx = +row.dataset.idx;
+    row.querySelector('.itype').onchange = e=>{ st.items[idx].type = e.target.value; };
+    row.querySelector('.ilabel').oninput = e=>{ st.items[idx].label = e.target.value; };
+    row.querySelector('[data-remove]').onclick = ()=>{
+      st.items.splice(idx,1);
+      renderFormBuilder(body);
+    };
+  });
+
+  document.getElementById('saveFormBtn').onclick = async ()=>{
+    if(!st.title.trim()){ toast('Form başlığı gerekli.'); return; }
+    const cleanItems = st.items.filter(i=>i.label.trim());
+    if(cleanItems.length===0){ toast('En az bir madde ekleyin.'); return; }
+    if(st.id){
+      State.forms = State.forms.map(f=> f.id===st.id ? {...f, title:st.title, items:cleanItems} : f);
+    } else {
+      State.forms.push({id:uid('f'), title:st.title, active:true, items:cleanItems});
+    }
+    await kvSet('guv-formlar', State.forms);
+    toast('Form kaydedildi.');
+    formBuilderState = null;
+    renderFormlarTab();
+  };
+}
+
+/* ---------- PERSONEL TAB ---------- */
+function renderPersonelTab(){
+  const body = document.getElementById('adminBody');
+  body.innerHTML = `
+    <div class="card">
+      <h2>Personel</h2>
+      <p class="hint">Personel giriş ekranındaki isim listesini ve PIN kodlarını buradan yönetin.</p>
+      <div id="personelListWrap"></div>
+      <div style="border-top:1px solid var(--line);margin-top:18px;padding-top:18px;">
+        <div class="builder-row">
+          <input type="text" id="newPName" placeholder="Ad Soyad" style="flex:2;">
+          <input type="text" id="newPPin" placeholder="PIN (örn: 4 haneli)" style="flex:1;">
+          <button class="btn small" id="addPersonelBtn">Ekle</button>
+        </div>
+      </div>
+    </div>
+  `;
+  const wrap = document.getElementById('personelListWrap');
+  wrap.innerHTML = `
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>Ad Soyad</th><th>PIN</th><th></th></tr></thead>
+      <tbody>
+        ${State.personel.map(p=>`
+          <tr>
+            <td>${p.name}</td>
+            <td style="font-family:var(--mono);">${p.pin}</td>
+            <td><button class="btn danger small" data-id="${p.id}">Sil</button></td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+    </div>
+  `;
+  wrap.querySelectorAll('button[data-id]').forEach(b=>{
+    b.onclick = async ()=>{
+      const p = State.personel.find(x=>x.id===b.dataset.id);
+      if(confirm(`${p.name} silinsin mi? Geçmiş gönderimleri kayıtlı kalır.`)){
+        State.personel = State.personel.filter(x=>x.id!==p.id);
+        await kvSet('guv-personel', State.personel);
+        renderPersonelTab();
+      }
+    };
+  });
+  document.getElementById('addPersonelBtn').onclick = async ()=>{
+    const name = document.getElementById('newPName').value.trim();
+    const pin = document.getElementById('newPPin').value.trim();
+    if(!name || !pin){ toast('Ad ve PIN gerekli.'); return; }
+    State.personel.push({id:uid('p'), name, pin});
+    await kvSet('guv-personel', State.personel);
+    toast('Personel eklendi.');
+    renderPersonelTab();
+  };
+}
+
+/* ---------- AYARLAR TAB ---------- */
+function renderAyarlarTab(){
+  const body = document.getElementById('adminBody');
+  body.innerHTML = `
+    <div class="card">
+      <h2>Ayarlar</h2>
+      <p class="hint">Yönetici şifresini buradan değiştirebilirsiniz. Bu, güçlü bir güvenlik doğrulaması değildir; sadece panele erişimi sınırlar.</p>
+      <label>Yönetici Şifresi</label>
+      <input type="text" id="newAdminPin" value="${State.adminPin}">
+      <button class="btn small" id="savePinBtn">Kaydet</button>
+    </div>
+    <div class="card">
+      <h2>Eski Kayıtları Temizle</h2>
+      <p class="hint">
+        Seçtiğiniz tarihten <b>önceki</b> tüm gönderimler kalıcı olarak silinir. Bu işlem geri alınamaz.
+        Toplam ${State.submissions.length} kayıt var.
+      </p>
+      <label>Bu tarihten önceki kayıtları sil</label>
+      <input type="date" id="cleanupDate">
+      <button class="btn danger small" id="cleanupBtn">Eski Kayıtları Sil</button>
+      <p class="hint" style="margin-top:14px;margin-bottom:0;">
+        Alternatif: verinin bulunduğu Google E-Tablosu'nu doğrudan açıp "Gonderimler" sekmesinde
+        istediğiniz satırları elle de silebilirsiniz — panel bunu otomatik yansıtır.
+      </p>
+    </div>
+  `;
+  document.getElementById('savePinBtn').onclick = async ()=>{
+    const v = document.getElementById('newAdminPin').value.trim();
+    if(!v){ toast('Şifre boş olamaz.'); return; }
+    State.adminPin = v;
+    await kvSet('guv-admin-pin', v);
+    toast('Şifre güncellendi.');
+  };
+  document.getElementById('cleanupBtn').onclick = async ()=>{
+    const cutoff = document.getElementById('cleanupDate').value;
+    if(!cutoff){ toast('Önce bir tarih seçin.'); return; }
+    if(!confirm(`${trDate(cutoff)} tarihinden ÖNCEKİ tüm gönderimler kalıcı olarak silinecek. Emin misiniz?`)) return;
+    const r = await apiCall({action:'deleteSubmissionsBefore', cutoff});
+    if(r && r.ok){
+      State.submissions = await getSubmissionsRemote();
+      toast(`${r.deleted} kayıt silindi.`);
+      renderAyarlarTab();
+    } else {
+      toast('Silme işlemi başarısız oldu. Bağlantıyı kontrol edin.');
+    }
+  };
+}
+
+/* ============================================================
+   BAĞLANTI AYARLARI (Apps Script API URL)
+   ============================================================ */
+function openSettingsDialog(){
+  const current = CONFIG.apiUrl;
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px;';
+  overlay.innerHTML = `
+    <div class="card" style="max-width:520px;width:100%;margin:0;">
+      <h2>Bağlantı Ayarları</h2>
+      <p class="hint">Bu cihazın verileri okuyup yazacağı Google Apps Script API adresini girin. Kurulum adımları için "Kurulum Rehberi"ni indirin.</p>
+      <label>API URL</label>
+      <input type="text" id="apiUrlInput" value="${current}" placeholder="https://script.google.com/macros/s/.../exec">
+      <div class="err" id="apiUrlErr"></div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <button class="btn" id="apiUrlSave">Kaydet</button>
+        <button class="btn ghost" id="apiUrlTest">Bağlantıyı Test Et</button>
+        <button class="btn ghost" id="apiUrlClose">Kapat</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById('apiUrlClose').onclick = ()=> overlay.remove();
+  document.getElementById('apiUrlTest').onclick = async ()=>{
+    const val = document.getElementById('apiUrlInput').value.trim();
+    const err = document.getElementById('apiUrlErr');
+    err.style.color = 'var(--ink-dim)';
+    err.textContent = 'Test ediliyor…';
+    const prev = CONFIG.apiUrl;
+    CONFIG.apiUrl = val;
+    const ok = await apiPing();
+    CONFIG.apiUrl = prev; // test amaçlıydı, kaydet'e basılana kadar değiştirme
+    if(ok){ err.style.color='var(--green)'; err.textContent = '✓ Bağlantı başarılı.'; }
+    else{ err.style.color='var(--red)'; err.textContent = '✗ Bağlanılamadı. URL\'yi ve Apps Script dağıtımını kontrol edin.'; }
+  };
+  document.getElementById('apiUrlSave').onclick = async ()=>{
+    const val = document.getElementById('apiUrlInput').value.trim();
+    if(!val){ document.getElementById('apiUrlErr').textContent = 'URL boş olamaz.'; return; }
+    CONFIG.apiUrl = val;
+    overlay.remove();
+    app.innerHTML = `<div class="empty">Yükleniyor…</div>`;
+    const ok = await loadAll();
+    render();
+    if(ok) toast('Bağlantı kaydedildi.');
+    else toast('Bağlantı kaydedildi ama sunucudan yanıt alınamadı — deneme modunda devam ediliyor.');
+  };
+}
+
+function renderSetupGate(){
+  app.innerHTML = `
+    <div class="login-shell" style="max-width:560px;">
+      <h1>İlk Kurulum</h1>
+      <p class="sub">Bu panelin verileri kalıcı olarak saklaması ve tüm cihazlar arasında paylaşılması için ücretsiz bir Google Apps Script bağlantısı gerekiyor (10 dakika, kod yapıştırma dışında teknik bilgi gerektirmez).</p>
+      <ol style="font-size:13px;color:var(--ink-dim);line-height:1.9;padding-left:18px;margin-bottom:20px;">
+        <li>Google Drive'da yeni bir <b>Google E-Tablosu</b> oluşturun.</li>
+        <li>Üst menüden <b>Uzantılar → Apps Script</b>'i açın.</li>
+        <li>Size verdiğim kodu yapıştırıp kaydedin.</li>
+        <li><b>Dağıt → Yeni Dağıtım → Web Uygulaması</b> seçin. "Yürüten: Ben", "Erişim: Herkes" olarak ayarlayın ve dağıtın.</li>
+        <li>Size verilen URL'yi kopyalayıp aşağıya yapıştırın.</li>
+      </ol>
+      <label>API URL</label>
+      <input type="text" id="setupUrlInput" placeholder="https://script.google.com/macros/s/.../exec">
+      <div class="err" id="setupErr"></div>
+      <button class="btn" id="setupSaveBtn" style="width:100%;margin-bottom:10px;">Kaydet ve Devam Et</button>
+      <button class="btn ghost" id="setupSkipBtn" style="width:100%;">Şimdilik atla (yalnızca deneme, kaydetmez)</button>
+    </div>
+  `;
+  document.getElementById('setupSaveBtn').onclick = async ()=>{
+    const val = document.getElementById('setupUrlInput').value.trim();
+    if(!val){ document.getElementById('setupErr').textContent = 'URL boş olamaz.'; return; }
+    CONFIG.apiUrl = val;
+    app.innerHTML = `<div class="empty">Yükleniyor… (ilk bağlantı biraz uzun sürebilir)</div>`;
+    const ok = await loadAll();
+    if(!ok){
+      CONFIG.apiUrl = '';
+      renderSetupGate();
+      document.getElementById('setupErr').textContent = 'Sunucudan yanıt alınamadı. URL\'yi ve dağıtım ayarlarını (Yürüten: Ben, Erişim: Herkes) kontrol edip tekrar deneyin.';
+      return;
+    }
+    render();
+  };
+  document.getElementById('setupSkipBtn').onclick = async ()=>{
+    await loadAll();
+    render();
+  };
+}
+
+/* ============================================================
+   INIT
+   ============================================================ */
+(async function init(){
+  app.innerHTML = `<div class="empty">Yükleniyor…</div>`;
+  try{
+    if(!CONFIG.apiUrl){
+      renderSetupGate();
+      return;
+    }
+    await loadAll();
+    render();
+  }catch(err){
+    console.error('Başlatma hatası', err);
+    app.innerHTML = `
+      <div class="login-shell">
+        <h1>Bir sorun oluştu</h1>
+        <p class="sub">Sayfa başlatılırken beklenmeyen bir hata oluştu. Bu genelde dosyanın
+        WhatsApp/Telegram gibi bir uygulamanın kendi önizleyicisinden doğrudan açılmasından
+        kaynaklanır. Dosyayı önce cihaza <b>indirip</b>, ardından bir dosya yöneticisinden veya
+        tarayıcının "İndirilenler" kısmından açmayı deneyin.</p>
+        <button class="btn" onclick="location.reload()">Sayfayı Yenile</button>
+      </div>
+    `;
+  }
+})();
+</script>
+</body>
+</html>
