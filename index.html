@@ -335,9 +335,37 @@ const State = {
   adminPin: '1234',
   submissions: [],
   scans: [],
+  activityLoaded: false, // submissions/scans henüz çekilmedi mi?
   session: null,   // {role:'personel'|'admin', personelId?, name?}
 };
 
+/* HIZLI: sadece giriş ekranı için gereken küçük veri. Kayıt sayısı ne kadar
+   artarsa artsın bu her zaman hızlı kalır — büyük tabloları okumaz. */
+async function loadCore(){
+  const r = await apiCall({action:'initCore'}, 20000);
+  if(r && r.personel && r.forms){
+    State.personel = r.personel;
+    State.forms = r.forms;
+    State.adminPin = r.adminPin || '1234';
+    return true;
+  }
+  State.personel = SEED_PERSONEL;
+  State.forms = [seedGuvenlikFormu()];
+  State.adminPin = '1234';
+  return false;
+}
+
+/* Ancak giriş yapıldıktan SONRA çağrılır: geçmiş formlar + QR taramaları.
+   Bunlar zamanla büyüyen veriler, o yüzden giriş ekranını bekletmesinler diye ayrıldı. */
+async function loadActivityData(){
+  const [subs, scans] = await Promise.all([getSubmissionsRemote(), getScansRemote()]);
+  State.submissions = subs;
+  State.scans = scans;
+  State.activityLoaded = true;
+}
+
+/* Geriye dönük uyumluluk için: eskisi gibi her şeyi tek seferde çeker
+   (şu an kullanılmıyor ama ileride gerekirse diye tutuluyor). */
 async function loadAll(){
   const r = await apiCall({action:'init'}, 25000);
   if(r && r.personel && r.forms){
@@ -346,9 +374,9 @@ async function loadAll(){
     State.adminPin = r.adminPin || '1234';
     State.submissions = r.submissions || [];
     State.scans = r.scans || [];
+    State.activityLoaded = true;
     return true;
   }
-  // API'ye ulaşılamadı: yalnızca bu oturum için yerel varsayılanlarla devam et (kaydetmez)
   State.personel = SEED_PERSONEL;
   State.forms = [seedGuvenlikFormu()];
   State.adminPin = '1234';
@@ -435,21 +463,28 @@ function renderLogin(){
     `;
   }
 
-  document.getElementById('loginBtn').onclick = ()=>{
+  document.getElementById('loginBtn').onclick = async ()=>{
     const err = document.getElementById('loginErr');
     const pin = document.getElementById('loginPin').value.trim();
+    let sessionToSet = null;
     if(loginRole === 'personel'){
       const sel = document.getElementById('loginPersonel');
       const p = State.personel.find(x=>x.id===sel.value);
       if(!p){ err.textContent = 'Personel bulunamadı.'; return; }
       if(pin !== p.pin){ err.textContent = 'PIN hatalı.'; return; }
-      State.session = {role:'personel', personelId:p.id, name:p.name};
-      render();
+      sessionToSet = {role:'personel', personelId:p.id, name:p.name};
     } else {
       if(pin !== State.adminPin){ err.textContent = 'Şifre hatalı.'; return; }
-      State.session = {role:'admin'};
-      render();
+      sessionToSet = {role:'admin'};
     }
+    if(!State.activityLoaded){
+      const btn = document.getElementById('loginBtn');
+      btn.disabled = true; btn.textContent = 'Kayıtlar yükleniyor…';
+      await loadActivityData();
+      btn.disabled = false; btn.textContent = 'Giriş Yap';
+    }
+    State.session = sessionToSet;
+    render();
   };
 }
 
@@ -1301,7 +1336,7 @@ if('serviceWorker' in navigator){
 (async function init(){
   app.innerHTML = `<div class="empty">Yükleniyor…</div>`;
   try{
-    await loadAll();
+    await loadCore();
     if(SCAN_ITEM_ID){
       renderScanConfirm();
     } else {
