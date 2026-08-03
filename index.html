@@ -8,7 +8,7 @@
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
 <meta name="theme-color" content="#12181f">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.0.3/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@2.0.4/dist/qrcode.js"></script>
 <style>
   :root{
     --bg: #f2f3f5;
@@ -980,15 +980,24 @@ DAE ELEKTRİK"></textarea>
    NOT: Bu kütüphanenin otomatik boyut algılama (typeNumber=0) özelliği belirli
    metin uzunluklarında hatalıydı — bunun yerine sığan boyutu elle deniyoruz. */
 function makeQrDataUrl(text, cellSize){
+  // Önce otomatik boyut algılamayı dene (güncel kütüphanede düzgün çalışıyor)
+  try{
+    const qr = qrcode(0, 'M');
+    qr.addData(text);
+    qr.make();
+    return qr.createDataURL(cellSize || 6, 8);
+  }catch(e){ /* devam, elle dene */ }
+
+  let lastErr = null;
   for(let type=1; type<=40; type++){
     try{
       const qr = qrcode(type, 'M');
       qr.addData(text);
       qr.make();
       return qr.createDataURL(cellSize || 6, 8);
-    }catch(e){ /* bu boyuta sığmadı, bir sonrakini dene */ }
+    }catch(e){ lastErr = e; }
   }
-  throw new Error(`QR üretilemedi: metin çok uzun (${text.length} karakter): ${text}`);
+  throw new Error(`QR üretilemedi (${text.length} karakter). Son hata: ${lastErr ? (lastErr.message || lastErr) : 'bilinmiyor'}`);
 }
 
 function printAllQrCodes(form){
