@@ -273,12 +273,12 @@ async function logScanRemote(data){
 
 function uid(prefix){ return prefix + '_' + Math.random().toString(36).slice(2,9); }
 /* Gece vardiyası gece yarısını geçtiği için "gün" kavramını takvim gününe değil
-   VARDİYA gününe göre hesaplıyoruz: saat 12:00'den önceki her şey (gece yarısından
+   VARDİYA gününe göre hesaplıyoruz: saat 08:00'den önceki her şey (gece yarısından
    sonraki saatler dahil) hâlâ "dünkü" vardiyaya ait sayılır. Böylece 19:00'da başlayıp
    07:00'de biten bir vardiyanın tüm kayıtları TEK bir tarihte toplanır. */
 function todayStr(){
   const d = new Date();
-  if(d.getHours() < 12){ d.setDate(d.getDate() - 1); }
+  if(d.getHours() < 8){ d.setDate(d.getDate() - 1); }
   return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 }
 function trDate(iso){
