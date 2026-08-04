@@ -11,6 +11,7 @@
 <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@2.0.4/dist/qrcode.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
 <style>
   :root{
     --bg: #f2f3f5;
@@ -222,6 +223,23 @@ const firebaseConfig = {
 
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
+const auth = firebase.auth();
+
+/* Anonim oturum: kullanıcıya hiçbir giriş ekranı göstermez, arka planda sessizce
+   çalışır. Firestore kuralları artık "allow if request.auth != null" olduğu için
+   bu oturum kurulmadan hiçbir veri okunup yazılamaz — botlara/rastgele erişime
+   karşı hafif bir engel. Gerçek kişi bazlı yetkilendirme değildir. */
+function ensureAuth(){
+  return new Promise((resolve)=>{
+    const unsub = auth.onAuthStateChanged(user=>{
+      if(user){ unsub(); resolve(user); }
+    });
+    auth.signInAnonymously().catch(err=>{
+      console.error('Anonim oturum açılamadı', err);
+      resolve(null);
+    });
+  });
+}
 
 const SITE_URL = window.location.origin + window.location.pathname; // sayfanın kendi gerçek adresi (QR linkleri için)
 const SCAN_ITEM_ID = new URLSearchParams(window.location.search).get('cp') || '';
@@ -1786,6 +1804,7 @@ if('serviceWorker' in navigator){
 (async function init(){
   app.innerHTML = `<div class="empty">Yükleniyor…</div>`;
   try{
+    await ensureAuth();
     await loadCore();
     if(SCAN_ITEM_ID){
       renderScanConfirm();
@@ -1797,8 +1816,7 @@ if('serviceWorker' in navigator){
     app.innerHTML = `
       <div class="login-shell">
         <h1>Bir sorun oluştu</h1>
-        <p class="sub">Sayfa başlatılırken beklenmeyen bir hata oluştu. Sayfayı yenilemeyi deneyin;
-        sorun devam ederse Apps Script dağıtımınızı (Dağıt → Dağıtımları Yönet) kontrol edin.</p>
+        <p class="sub">Sayfa başlatılırken beklenmeyen bir hata oluştu. Sayfayı yenilemeyi deneyin.</p>
         <button class="btn" onclick="location.reload()">Sayfayı Yenile</button>
       </div>
     `;
