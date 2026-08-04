@@ -244,14 +244,18 @@ function ensureAuth(){
 const SITE_URL = window.location.origin + window.location.pathname; // sayfanın kendi gerçek adresi (QR linkleri için)
 const SCAN_ITEM_ID = new URLSearchParams(window.location.search).get('cp') || '';
 
-/* ---- basit anahtar/değer (personel listesi, form yapısı, admin şifresi) ---- */
+/* ---- basit anahtar/değer (personel listesi, form yapısı, admin şifresi) ----
+   ÖNEMLİ: Burada hataları YUTMUYORUZ (try/catch yok). Sebebi: eğer bir okuma
+   hatasını (izin hatası, ağ kopması vb.) "kayıt yok" ile aynı şekilde ele alırsak,
+   loadCore() bunu "veritabanı boş" sanıp VARSAYILAN VERİYLE ÜZERİNE YAZABİLİR —
+   gerçek personel/form/yönetici listesini silme riski doğar. Bunun yerine hata
+   olduğunda yukarıya (loadCore'un try/catch'ine) fırlatılır; orada Firestore'a
+   hiçbir şey YAZILMADAN sadece geçici/yerel varsayılanlarla devam edilir. */
 async function kvGet(key, fallback){
-  try{
-    const doc = await db.collection('kv').doc(key).get();
-    if(!doc.exists) return fallback;
-    const v = doc.data().value;
-    return v === undefined ? fallback : JSON.parse(v);
-  }catch(e){ console.error('kvGet hatası', key, e); return fallback; }
+  const doc = await db.collection('kv').doc(key).get();
+  if(!doc.exists) return fallback;
+  const v = doc.data().value;
+  return v === undefined ? fallback : JSON.parse(v);
 }
 async function kvSet(key, value){
   try{ await db.collection('kv').doc(key).set({value: JSON.stringify(value)}); return true; }
