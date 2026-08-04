@@ -455,12 +455,12 @@ function renderLogin(){
         ${State.personel.map(p=>`<option value="${p.id}">${p.name}</option>`).join('')}
       </select>
       <label>PIN</label>
-      <input type="password" id="loginPin" placeholder="••••" maxlength="8">
+      <input type="password" id="loginPin" placeholder="••••" maxlength="8" autocomplete="new-password">
     `;
   } else {
     fields.innerHTML = `
       <label>Yönetici Şifresi</label>
-      <input type="password" id="loginPin" placeholder="••••" maxlength="12">
+      <input type="password" id="loginPin" placeholder="••••" maxlength="12" autocomplete="new-password">
     `;
   }
 
@@ -1049,7 +1049,7 @@ function renderFormBuilder(body){
     <div class="card">
       <h2>${st.id ? 'Formu Düzenle' : 'Yeni Form Oluştur'}</h2>
       <label>Form Başlığı</label>
-      <input type="text" id="fTitle" value="${st.title}" placeholder="Örn: Gündüz Vardiya Kontrol Formu">
+      <input type="text" id="fTitle" value="${st.title}" placeholder="Örn: Gündüz Vardiya Kontrol Formu" autocomplete="off">
       <div style="display:flex;gap:12px;">
         <div style="flex:1;">
           <label>Vardiya Başlangıç</label>
@@ -1060,7 +1060,7 @@ function renderFormBuilder(body){
           <input type="time" id="fShiftEnd" value="${st.shiftEnd||'07:00'}">
         </div>
       </div>
-      <p class="hint" style="margin-top:-8px;">QR noktalarındaki "beklenen tur sayısı" bu vardiya süresine göre hesaplanır. Vardiya gece yarısını geçebilir (örn. 19:00 → 07:00), sorun değil.</p>
+      <p class="hint" style="margin-top:6px;">QR noktalarındaki "beklenen tur sayısı" bu vardiya süresine göre hesaplanır. Vardiya gece yarısını geçebilir (örn. 19:00 → 07:00), sorun değil.</p>
       <label>Maddeler</label>
       <div id="itemsBuilder"></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
@@ -1092,7 +1092,7 @@ function renderFormBuilder(body){
         <option value="qr_nokta" ${item.type==='qr_nokta'?'selected':''}>QR Kontrol Noktası</option>
         <option value="baslik" ${item.type==='baslik'?'selected':''}>Bölüm Başlığı</option>
       </select>
-      <input type="text" class="ilabel" value="${item.label}" placeholder="Madde metni">
+      <input type="text" class="ilabel" value="${item.label}" placeholder="Madde metni" autocomplete="off" name="madde-${item.id}">
       ${item.type==='qr_nokta' ? `
         <span style="font-size:12px;color:var(--ink-dim);white-space:nowrap;">Periyot:</span>
         <input type="number" class="iperiod" value="${item.periodMinutes || 60}" min="5" step="5" style="width:70px;margin:0;" title="Kaç dakikada bir gezilecek">
@@ -1287,8 +1287,8 @@ function renderPersonelTab(){
       <div id="personelListWrap"></div>
       <div style="border-top:1px solid var(--line);margin-top:18px;padding-top:18px;">
         <div class="builder-row">
-          <input type="text" id="newPName" placeholder="Ad Soyad" style="flex:2;">
-          <input type="text" id="newPPin" placeholder="PIN (örn: 4 haneli)" style="flex:1;">
+          <input type="text" id="newPName" placeholder="Ad Soyad" style="flex:2;" autocomplete="off">
+          <input type="text" id="newPPin" placeholder="PIN (örn: 4 haneli)" style="flex:1;" autocomplete="off">
           <button class="btn small" id="addPersonelBtn">Ekle</button>
         </div>
       </div>
@@ -1340,7 +1340,7 @@ function renderAyarlarTab(){
       <h2>Ayarlar</h2>
       <p class="hint">Yönetici şifresini buradan değiştirebilirsiniz. Bu, güçlü bir güvenlik doğrulaması değildir; sadece panele erişimi sınırlar.</p>
       <label>Yönetici Şifresi</label>
-      <input type="text" id="newAdminPin" value="${State.adminPin}">
+      <input type="text" id="newAdminPin" value="${State.adminPin}" autocomplete="off">
       <button class="btn small" id="savePinBtn">Kaydet</button>
     </div>
     <div class="card">
@@ -1452,7 +1452,7 @@ function renderScanConfirmFull(item, label){
         ${State.personel.map(p=>`<option value="${p.id}">${p.name}</option>`).join('')}
       </select>
       <label>PIN</label>
-      <input type="password" id="scanPin" placeholder="••••" maxlength="8">
+      <input type="password" id="scanPin" placeholder="••••" maxlength="8" autocomplete="new-password">
       <div class="err" id="scanErr"></div>
       <button class="btn" id="scanConfirmBtn" style="width:100%;">Onayla</button>
     </div>
