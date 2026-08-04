@@ -755,7 +755,10 @@ function renderGonderimlerTab(){
     <div class="card">
       <div class="flex-between">
         <h2 style="margin:0;">Gönderilen Formlar</h2>
-        <button class="btn ghost small" id="refreshSubsBtn">🔄 Yenile</button>
+        <div style="display:flex;gap:8px;">
+          <button class="btn ghost small" id="printListBtn">🖨 Listeyi PDF Yap</button>
+          <button class="btn ghost small" id="refreshSubsBtn">🔄 Yenile</button>
+        </div>
       </div>
       <div class="filters" style="margin-bottom:18px;">
         <div><label>Tarih</label><input type="date" id="fDate" value="${gFilterDate}"></div>
@@ -790,6 +793,12 @@ function renderGonderimlerTab(){
   if(gFilterPersonel) list = list.filter(s=>s.personelId===gFilterPersonel);
   if(gFilterForm) list = list.filter(s=>s.formId===gFilterForm);
 
+  document.getElementById('printListBtn').onclick = ()=>{
+    if(list.length===0){ toast('Yazdırılacak kayıt yok.'); return; }
+    const printBody = list.map(s=>buildSubmissionPrintBody(s)).join('<hr style="margin:24px 0;">');
+    printHtmlDocument('Gönderilen Formlar', printBody);
+  };
+
   const tableWrap = document.getElementById('subTableWrap');
   if(list.length===0){
     tableWrap.innerHTML = `<div class="empty">Kayıt bulunamadı.</div>`;
@@ -809,7 +818,10 @@ function renderGonderimlerTab(){
             <td>${s.formTitle}</td>
             <td>${st.hayirCount}</td>
             <td>${st.status==='TAMAM' ? '<span class="badge ok"><span class="lamp ok"></span> TAMAM</span>' : '<span class="badge warn"><span class="lamp warn"></span> DİKKAT</span>'}</td>
-            <td><button class="btn ghost small" data-id="${s.id}">Detay</button></td>
+            <td style="white-space:nowrap;">
+              <button class="btn ghost small" data-id="${s.id}">Detay</button>
+              <button class="btn ghost small" data-pdf="${s.id}">PDF</button>
+            </td>
           </tr>
           ${gExpanded===s.id ? `<tr><td colspan="6">${renderSubmissionDetail(s)}</td></tr>` : ''}
           `;
@@ -820,6 +832,12 @@ function renderGonderimlerTab(){
   `;
   tableWrap.querySelectorAll('button[data-id]').forEach(b=>{
     b.onclick = ()=>{ gExpanded = (gExpanded===b.dataset.id) ? null : b.dataset.id; renderGonderimlerTab(); };
+  });
+  tableWrap.querySelectorAll('button[data-pdf]').forEach(b=>{
+    b.onclick = ()=>{
+      const sub = list.find(s=>s.id===b.dataset.pdf);
+      if(sub) printHtmlDocument(`${sub.formTitle} — ${trDate(sub.tarih)}`, buildSubmissionPrintBody(sub));
+    };
   });
 }
 
@@ -854,7 +872,10 @@ function renderQrTurlariTab(){
     <div class="card">
       <div class="flex-between">
         <h2 style="margin:0;">QR Turları</h2>
-        <button class="btn ghost small" id="refreshQrBtn">🔄 Yenile</button>
+        <div style="display:flex;gap:8px;">
+          <button class="btn ghost small" id="printQrBtn">🖨 PDF Yap</button>
+          <button class="btn ghost small" id="refreshQrBtn">🔄 Yenile</button>
+        </div>
       </div>
       <p class="hint">Her kontrol noktasının seçilen gündeki tüm taramaları — form doldurulmuş olsun ya da olmasın burada görünür.</p>
       <div class="filters" style="margin-bottom:18px;">
@@ -869,6 +890,22 @@ function renderQrTurlariTab(){
     btn.disabled = true; btn.textContent = 'Yenileniyor…';
     await loadActivityData();
     renderQrTurlariTab();
+  };
+  document.getElementById('printQrBtn').onclick = ()=>{
+    const qrItemsForPrint = allQrItemsAcrossForms();
+    if(qrItemsForPrint.length===0){ toast('Yazdırılacak QR noktası yok.'); return; }
+    const sections = qrItemsForPrint.map(item=>{
+      const scans = State.scans.filter(s=>s.itemId===item.id && s.tarih===qFilterDate).sort((a,b)=>a.saat.localeCompare(b.saat));
+      const period = item.periodMinutes || 60;
+      const expected = Math.max(1, Math.round(shiftDurationMinutes(item.shiftStart, item.shiftEnd) / period));
+      const rows = scans.length
+        ? scans.map(s=>`<div class="row"><span>🕐 ${formatTime(s.saat)} · ${s.personelName}</span></div>`).join('')
+        : `<div class="row"><span>Tarama yok</span></div>`;
+      return `<h2>${item.label} — ${scans.length} / ${expected} tur</h2>
+        <div class="meta">${item.formTitle} · Vardiya ${item.shiftStart}–${item.shiftEnd} · Periyot: ${period} dk</div>
+        ${rows}`;
+    }).join('');
+    printHtmlDocument('QR Turları', `<h1>QR Turları — ${trDate(qFilterDate)}</h1>${sections}`);
   };
 
   const wrap = document.getElementById('qrTurWrap');
@@ -940,6 +977,60 @@ function renderQrTurlariTab(){
       </div>
     `;
   }
+}
+
+/* ---------- PDF/Yazdırma yardımcıları ---------- */
+function printHtmlDocument(title, bodyHtml){
+  const w = window.open('', '_blank');
+  if(!w){ toast('Pop-up engellendi — tarayıcının adres çubuğundaki pop-up simgesine tıklayıp izin verin.'); return; }
+  w.document.write(`
+    <html><head><title>${title}</title>
+    <style>
+      body{font-family:Arial,sans-serif;color:#1b2430;padding:24px;}
+      h1{font-size:19px;margin:0 0 4px;}
+      h2{font-size:14px;margin:20px 0 6px;color:#b96a12;text-transform:uppercase;letter-spacing:.3px;}
+      .meta{color:#667085;font-size:12px;margin-bottom:16px;}
+      table{width:100%;border-collapse:collapse;margin-bottom:16px;font-size:12.5px;}
+      th,td{border:1px solid #ddd;padding:6px 8px;text-align:left;}
+      th{background:#f2f3f5;}
+      .row{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px dashed #ddd;font-size:13px;}
+      .badge{display:inline-block;padding:2px 10px;border-radius:12px;font-size:11px;font-weight:700;}
+      .ok{background:#e6f4ec;color:#1c7a4c;}
+      .warn{background:#fdeceb;color:#b1382c;}
+      @media print { body{padding:0;} }
+    </style>
+    </head><body>${bodyHtml}</body></html>
+  `);
+  w.document.close();
+  setTimeout(()=>{ w.focus(); w.print(); }, 300);
+}
+
+/* Tek bir gönderimi yazdırmaya uygun (CSS değişkeni kullanmayan) HTML üretir */
+function buildSubmissionPrintBody(sub){
+  const form = State.forms.find(f=>f.id===sub.formId);
+  const st = submissionStatus(sub);
+  let itemsHtml = '';
+  if(form){
+    itemsHtml = form.items.map(item=>{
+      if(item.type==='baslik') return `<h2>${item.label}</h2>`;
+      const val = answerValue(sub.answers[item.id]);
+      const t = answerTime(sub.answers[item.id]);
+      const timeStr = t ? `🕐 ${formatTime(t)}` : '';
+      if(item.type==='not'){
+        return `<div class="row"><span><b>${item.label}:</b> ${val && val.trim() ? val : '(boş)'}</span><span>${timeStr}</span></div>`;
+      }
+      if(item.type==='qr_nokta'){
+        const scan = findLatestScan(item.id, sub.tarih);
+        return `<div class="row"><span>${item.label}</span><span>${scan ? `🕐 ${formatTime(scan.saat)} · ${scan.personelName} · ✓ Doğrulandı` : 'Taranmadı'}</span></div>`;
+      }
+      return `<div class="row"><span>${item.label}</span><span>${timeStr} ${val||'—'}</span></div>`;
+    }).join('');
+  }
+  return `
+    <h1>${sub.formTitle}</h1>
+    <div class="meta">${trDate(sub.tarih)} · ${sub.personelName} · Durum: <b>${st.status}</b></div>
+    ${itemsHtml}
+  `;
 }
 
 function renderSubmissionDetail(sub){
