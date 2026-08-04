@@ -596,13 +596,18 @@ function renderFillForm(formId){
         </div>`;
     }
     if(item.type === 'qr_nokta'){
-      const scan = findLatestScan(item.id, tarih);
+      const todaysScans = State.scans
+        .filter(s=>s.itemId===item.id && s.tarih===tarih)
+        .sort((a,b)=> a.saat.localeCompare(b.saat));
+      const period = item.periodMinutes || 60;
+      const scanListHtml = todaysScans.length
+        ? todaysScans.map(s=>`<div style="font-size:12px;color:var(--ink-dim);padding:2px 0;">🕐 ${formatTime(s.saat)} · ${s.personelName}</div>`).join('')
+        : `<div style="font-size:12px;color:var(--ink-dim);">Bugün henüz taranmadı.</div>`;
       return `
         <div class="item-row" style="flex-direction:column;align-items:stretch;" data-id="${item.id}" data-itemid="${item.id}">
-          <label style="margin-bottom:8px;">${item.label}</label>
-          <div class="qr-status">${scan
-            ? `<span class="badge ok"><span class="lamp ok"></span> DOĞRULANDI</span> <span class="ans-time">🕐 ${formatTime(scan.saat)} · ${scan.personelName}</span>`
-            : '<span class="badge warn"><span class="lamp warn"></span> HENÜZ TARANMADI</span>'}</div>
+          <label style="margin-bottom:4px;">${item.label}</label>
+          <div style="font-size:11px;color:var(--ink-dim);margin-bottom:8px;">Beklenen periyot: her ${period} dakikada bir</div>
+          <div class="qr-status">${scanListHtml}</div>
           <div class="hint" style="margin:8px 0 0;">Bu noktadaki QR etiketini telefonunuzun <b>kendi kamera uygulamasıyla</b> okutun — açılan sayfada onaylayın. Onayladıktan sonra buraya dönüp aşağıdan yenileyin.</div>
           <button class="btn ghost small qr-refresh-btn" data-id="${item.id}" style="margin-top:8px;align-self:flex-start;">🔄 Durumu Yenile</button>
         </div>`;
@@ -652,11 +657,13 @@ function renderFillForm(formId){
       btn.textContent = '🔄 Durumu Yenile';
       const row = btn.closest('.item-row');
       const itemId = row.dataset.itemid;
-      const scan = findLatestScan(itemId, tarih);
+      const todaysScans = State.scans
+        .filter(s=>s.itemId===itemId && s.tarih===tarih)
+        .sort((a,b)=> a.saat.localeCompare(b.saat));
       const statusEl = row.querySelector('.qr-status');
-      statusEl.innerHTML = scan
-        ? `<span class="badge ok"><span class="lamp ok"></span> DOĞRULANDI</span> <span class="ans-time">🕐 ${formatTime(scan.saat)} · ${scan.personelName}</span>`
-        : '<span class="badge warn"><span class="lamp warn"></span> HENÜZ TARANMADI</span>';
+      statusEl.innerHTML = todaysScans.length
+        ? todaysScans.map(s=>`<div style="font-size:12px;color:var(--ink-dim);padding:2px 0;">🕐 ${formatTime(s.saat)} · ${s.personelName}</div>`).join('')
+        : `<div style="font-size:12px;color:var(--ink-dim);">Bugün henüz taranmadı.</div>`;
     };
   });
 
@@ -703,6 +710,7 @@ function renderAdminPanel(){
   app.innerHTML = `
     <div class="tabs">
       <button data-t="gonderimler" class="${adminTab==='gonderimler'?'active':''}">GÖNDERİMLER</button>
+      <button data-t="qrturlari" class="${adminTab==='qrturlari'?'active':''}">QR TURLARI</button>
       <button data-t="formlar" class="${adminTab==='formlar'?'active':''}">FORMLAR</button>
       <button data-t="personel" class="${adminTab==='personel'?'active':''}">PERSONEL</button>
       <button data-t="ayarlar" class="${adminTab==='ayarlar'?'active':''}">AYARLAR</button>
@@ -713,6 +721,7 @@ function renderAdminPanel(){
     b.onclick = ()=>{ adminTab = b.dataset.t; renderAdminPanel(); };
   });
   if(adminTab === 'gonderimler') renderGonderimlerTab();
+  else if(adminTab === 'qrturlari') renderQrTurlariTab();
   else if(adminTab === 'formlar') renderFormlarTab();
   else if(adminTab === 'personel') renderPersonelTab();
   else renderAyarlarTab();
@@ -741,6 +750,7 @@ function renderGonderimlerTab(){
     <div class="card">
       <div class="flex-between">
         <h2 style="margin:0;">Gönderilen Formlar</h2>
+        <button class="btn ghost small" id="refreshSubsBtn">🔄 Yenile</button>
       </div>
       <div class="filters" style="margin-bottom:18px;">
         <div><label>Tarih</label><input type="date" id="fDate" value="${gFilterDate}"></div>
@@ -763,6 +773,12 @@ function renderGonderimlerTab(){
   document.getElementById('fDate').oninput = e=>{ gFilterDate=e.target.value; renderGonderimlerTab(); };
   document.getElementById('fPersonel').onchange = e=>{ gFilterPersonel=e.target.value; renderGonderimlerTab(); };
   document.getElementById('fForm').onchange = e=>{ gFilterForm=e.target.value; renderGonderimlerTab(); };
+  document.getElementById('refreshSubsBtn').onclick = async ()=>{
+    const btn = document.getElementById('refreshSubsBtn');
+    btn.disabled = true; btn.textContent = 'Yenileniyor…';
+    await loadActivityData();
+    renderGonderimlerTab();
+  };
 
   let list = [...State.submissions].sort((a,b)=> b.tarih.localeCompare(a.tarih) || b.olusturulma.localeCompare(a.olusturulma));
   if(gFilterDate) list = list.filter(s=>s.tarih===gFilterDate);
@@ -800,6 +816,91 @@ function renderGonderimlerTab(){
   tableWrap.querySelectorAll('button[data-id]').forEach(b=>{
     b.onclick = ()=>{ gExpanded = (gExpanded===b.dataset.id) ? null : b.dataset.id; renderGonderimlerTab(); };
   });
+}
+
+/* ---------- QR TURLARI (ana formdan bağımsız, dönemsel devriye günlüğü) ---------- */
+let qFilterDate = todayStr();
+
+function allQrItemsAcrossForms(){
+  const out = [];
+  State.forms.forEach(f=>{
+    f.items.forEach(item=>{
+      if(item.type === 'qr_nokta') out.push({...item, formTitle: f.title});
+    });
+  });
+  return out;
+}
+
+function renderQrTurlariTab(){
+  const body = document.getElementById('adminBody');
+  body.innerHTML = `
+    <div class="card">
+      <div class="flex-between">
+        <h2 style="margin:0;">QR Turları</h2>
+        <button class="btn ghost small" id="refreshQrBtn">🔄 Yenile</button>
+      </div>
+      <p class="hint">Her kontrol noktasının seçilen gündeki tüm taramaları — form doldurulmuş olsun ya da olmasın burada görünür.</p>
+      <div class="filters" style="margin-bottom:18px;">
+        <div><label>Tarih</label><input type="date" id="qDate" value="${qFilterDate}"></div>
+      </div>
+      <div id="qrTurWrap"></div>
+    </div>
+  `;
+  document.getElementById('qDate').oninput = e=>{ qFilterDate = e.target.value; renderQrTurlariTab(); };
+  document.getElementById('refreshQrBtn').onclick = async ()=>{
+    const btn = document.getElementById('refreshQrBtn');
+    btn.disabled = true; btn.textContent = 'Yenileniyor…';
+    await loadActivityData();
+    renderQrTurlariTab();
+  };
+
+  const wrap = document.getElementById('qrTurWrap');
+  const qrItems = allQrItemsAcrossForms();
+  if(qrItems.length===0){
+    wrap.innerHTML = `<div class="empty">Henüz tanımlı QR kontrol noktası yok. Formlar sekmesinden ekleyebilirsiniz.</div>`;
+    return;
+  }
+
+  wrap.innerHTML = qrItems.map(item=>{
+    const scans = State.scans
+      .filter(s=>s.itemId===item.id && s.tarih===qFilterDate)
+      .sort((a,b)=> a.saat.localeCompare(b.saat));
+    const period = item.periodMinutes || 60;
+
+    let rowsHtml = '';
+    if(scans.length===0){
+      rowsHtml = `<div class="empty" style="padding:14px 0;">Bu gün için henüz tarama yok.</div>`;
+    } else {
+      rowsHtml = scans.map((s,idx)=>{
+        let gapWarning = '';
+        if(idx > 0){
+          const prevMs = new Date(scans[idx-1].saat).getTime();
+          const curMs = new Date(s.saat).getTime();
+          const gapMin = Math.round((curMs - prevMs) / 60000);
+          if(gapMin > period * 1.5){
+            gapWarning = `<span class="badge warn" style="margin-left:8px;"><span class="lamp warn"></span> ${gapMin} dk boşluk</span>`;
+          }
+        }
+        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px dashed var(--line);font-size:13px;">
+          <span>🕐 ${formatTime(s.saat)} · ${s.personelName}</span>
+          <span>${gapWarning}</span>
+        </div>`;
+      }).join('');
+    }
+
+    return `
+      <div class="card" style="background:var(--panel-2);margin-bottom:14px;">
+        <div class="flex-between" style="margin-bottom:6px;">
+          <div>
+            <b>${item.label}</b>
+            <div class="meta" style="font-size:12px;color:var(--ink-dim);">${item.formTitle} · Beklenen periyot: ${period} dk</div>
+          </div>
+          <span class="badge ${scans.length>0?'ok':'warn'}">${scans.length} tur</span>
+        </div>
+        ${rowsHtml}
+      </div>
+    `;
+  }).join('');
 }
 
 function renderSubmissionDetail(sub){
@@ -940,7 +1041,12 @@ function renderFormBuilder(body){
         <option value="baslik" ${item.type==='baslik'?'selected':''}>Bölüm Başlığı</option>
       </select>
       <input type="text" class="ilabel" value="${item.label}" placeholder="Madde metni">
-      ${item.type==='qr_nokta' ? `<button class="btn ghost small" data-qr="${idx}">QR Kodu Gör/Yazdır</button>` : ''}
+      ${item.type==='qr_nokta' ? `
+        <span style="font-size:12px;color:var(--ink-dim);white-space:nowrap;">Periyot:</span>
+        <input type="number" class="iperiod" value="${item.periodMinutes || 60}" min="5" step="5" style="width:70px;margin:0;" title="Kaç dakikada bir gezilecek">
+        <span style="font-size:12px;color:var(--ink-dim);">dk</span>
+        <button class="btn ghost small" data-qr="${idx}">QR Kodu Gör/Yazdır</button>
+      ` : ''}
       <button class="btn danger small" data-remove="${idx}">Sil</button>
     </div>
   `).join('');
@@ -948,9 +1054,14 @@ function renderFormBuilder(body){
     const idx = +row.dataset.idx;
     row.querySelector('.itype').onchange = e=>{
       st.items[idx].type = e.target.value;
+      if(e.target.value === 'qr_nokta' && !st.items[idx].periodMinutes){
+        st.items[idx].periodMinutes = 60;
+      }
       renderFormBuilder(body);
     };
     row.querySelector('.ilabel').oninput = e=>{ st.items[idx].label = e.target.value; };
+    const periodInput = row.querySelector('.iperiod');
+    if(periodInput) periodInput.oninput = e=>{ st.items[idx].periodMinutes = +e.target.value || 60; };
     const qrBtn = row.querySelector('[data-qr]');
     if(qrBtn) qrBtn.onclick = ()=> showQrPrintView(st.items[idx]);
     row.querySelector('[data-remove]').onclick = ()=>{
@@ -998,7 +1109,7 @@ DAE ELEKTRİK"></textarea>
   document.getElementById('bulkQrAddBtn').onclick = ()=>{
     const lines = document.getElementById('bulkQrText').value.split('\n').map(l=>l.trim()).filter(Boolean);
     lines.forEach(label=>{
-      st.items.push({id:uid('i'), type:'qr_nokta', label});
+      st.items.push({id:uid('i'), type:'qr_nokta', label, periodMinutes: 60});
     });
     overlay.remove();
     renderFormBuilder(builderBody);
