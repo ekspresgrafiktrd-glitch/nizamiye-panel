@@ -901,6 +901,23 @@ function renderQrTurlariTab(){
       </div>
     `;
   }).join('');
+
+  // TEŞHİS: mevcut hiçbir noktaya ait olmayan (muhtemelen eski/silinmiş QR etiketinden gelen) taramalar
+  const knownIds = new Set(qrItems.map(i=>i.id));
+  const orphanScans = State.scans.filter(s=> s.tarih===qFilterDate && !knownIds.has(s.itemId));
+  if(orphanScans.length > 0){
+    wrap.innerHTML += `
+      <div class="card" style="background:rgba(200,56,43,.06);border-color:var(--red);margin-top:6px;">
+        <h3 style="margin:0 0 6px;color:var(--red);">⚠ Eşleşmeyen Taramalar (${orphanScans.length})</h3>
+        <p class="hint">Bu taramalar kaydedildi ama yukarıdaki hiçbir noktanın kimliğiyle eşleşmiyor — muhtemelen form düzenlenirken o noktanın kimliği değişti. Muhtemel çözüm: bu etiketi çöpe atıp o noktanın QR'ını Formlar'dan yeniden yazdırın.</p>
+        ${orphanScans.map(s=>`
+          <div style="font-size:12px;color:var(--ink-dim);padding:4px 0;border-bottom:1px dashed var(--line);">
+            🕐 ${formatTime(s.saat)} · ${s.personelName} · "<b>${s.checkpointLabel}</b>" · kimlik: <code>${s.itemId}</code>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  }
 }
 
 function renderSubmissionDetail(sub){
