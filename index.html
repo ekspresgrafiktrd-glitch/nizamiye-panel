@@ -624,6 +624,8 @@ function renderFillForm(formId){
         id: recordId, formId: f.id, formTitle: f.title,
         personelId: State.session.personelId, personelName: State.session.name,
         tarih, answers, olusturulma: new Date().toISOString(),
+        tamamlandiMi: existing ? !!existing.tamamlandiMi : false,
+        tamamlanmaSaati: existing ? (existing.tamamlanmaSaati || null) : null,
       };
       const ok = await addSubmissionRemote(record);
       if(ok){
@@ -733,6 +735,7 @@ function renderFillForm(formId){
       id: recordId, formId: f.id, formTitle: f.title,
       personelId: State.session.personelId, personelName: State.session.name,
       tarih, answers, olusturulma: new Date().toISOString(),
+      tamamlandiMi: true, tamamlanmaSaati: new Date().toISOString(),
     };
     btn.disabled = true;
     btn.textContent = 'Gönderiliyor…';
@@ -861,13 +864,22 @@ function renderGonderimlerTab(){
     tableWrap.innerHTML = `<div class="empty">Kayıt bulunamadı.</div>`;
     return;
   }
+  const currentShiftDay = todayStr();
   tableWrap.innerHTML = `
     <div class="table-scroll">
     <table>
-      <thead><tr><th>Tarih</th><th>Personel</th><th>Form</th><th>Eksik (Hayır)</th><th>Durum</th><th></th></tr></thead>
+      <thead><tr><th>Tarih</th><th>Personel</th><th>Form</th><th>Eksik (Hayır)</th><th>Durum</th><th>Gönderim</th><th></th></tr></thead>
       <tbody>
         ${list.map(s=>{
           const st = submissionStatus(s);
+          let gonderimHtml;
+          if(s.tamamlandiMi){
+            gonderimHtml = `<span class="badge ok"><span class="lamp ok"></span> Gönderildi ${formatTime(s.tamamlanmaSaati)}</span>`;
+          } else if(s.tarih === currentShiftDay){
+            gonderimHtml = `<span class="badge warn"><span class="lamp warn"></span> Devam ediyor <span class="ans-time">(son: ${formatTime(s.olusturulma)})</span></span>`;
+          } else {
+            gonderimHtml = `<span class="badge warn" style="background:rgba(200,56,43,.16);color:var(--red);"><span class="lamp warn"></span> ⚠ Hiç gönderilmedi!</span>`;
+          }
           return `
           <tr>
             <td>${trDate(s.tarih)}</td>
@@ -875,12 +887,13 @@ function renderGonderimlerTab(){
             <td>${s.formTitle}</td>
             <td>${st.hayirCount}</td>
             <td>${st.status==='TAMAM' ? '<span class="badge ok"><span class="lamp ok"></span> TAMAM</span>' : '<span class="badge warn"><span class="lamp warn"></span> DİKKAT</span>'}</td>
+            <td>${gonderimHtml}</td>
             <td style="white-space:nowrap;">
               <button class="btn ghost small" data-id="${s.id}">Detay</button>
               <button class="btn ghost small" data-pdf="${s.id}">PDF</button>
             </td>
           </tr>
-          ${gExpanded===s.id ? `<tr><td colspan="6">${renderSubmissionDetail(s)}</td></tr>` : ''}
+          ${gExpanded===s.id ? `<tr><td colspan="7">${renderSubmissionDetail(s)}</td></tr>` : ''}
           `;
         }).join('')}
       </tbody>
@@ -1083,9 +1096,12 @@ function buildSubmissionPrintBody(sub){
       return `<div class="row"><span>${item.label}</span><span>${timeStr} ${val||'—'}</span></div>`;
     }).join('');
   }
+  const gonderimStr = sub.tamamlandiMi
+    ? `Gönderildi: ${formatTime(sub.tamamlanmaSaati)}`
+    : `⚠ Hiç gönderilmedi (son otomatik kayıt: ${formatTime(sub.olusturulma)})`;
   return `
     <h1>${sub.formTitle}</h1>
-    <div class="meta">${trDate(sub.tarih)} · ${sub.personelName} · Durum: <b>${st.status}</b></div>
+    <div class="meta">${trDate(sub.tarih)} · ${sub.personelName} · Durum: <b>${st.status}</b> · ${gonderimStr}</div>
     ${itemsHtml}
   `;
 }
