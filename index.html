@@ -775,7 +775,7 @@ function renderGonderimlerTab(){
       <div id="subTableWrap"></div>
     </div>
   `;
-  document.getElementById('fDate').oninput = e=>{ gFilterDate=e.target.value; renderGonderimlerTab(); };
+  document.getElementById('fDate').onchange = e=>{ gFilterDate=e.target.value; renderGonderimlerTab(); };
   document.getElementById('fPersonel').onchange = e=>{ gFilterPersonel=e.target.value; renderGonderimlerTab(); };
   document.getElementById('fForm').onchange = e=>{ gFilterForm=e.target.value; renderGonderimlerTab(); };
   document.getElementById('refreshSubsBtn').onclick = async ()=>{
@@ -863,7 +863,7 @@ function renderQrTurlariTab(){
       <div id="qrTurWrap"></div>
     </div>
   `;
-  document.getElementById('qDate').oninput = e=>{ qFilterDate = e.target.value; renderQrTurlariTab(); };
+  document.getElementById('qDate').onchange = e=>{ qFilterDate = e.target.value; renderQrTurlariTab(); };
   document.getElementById('refreshQrBtn').onclick = async ()=>{
     const btn = document.getElementById('refreshQrBtn');
     btn.disabled = true; btn.textContent = 'Yenileniyor…';
