@@ -1413,6 +1413,8 @@ function showQrPrintView(item){
 }
 
 /* ---------- PERSONEL TAB ---------- */
+let personelEditingId = null;
+
 function renderPersonelTab(){
   const body = document.getElementById('adminBody');
   const canEdit = isFullAdmin();
@@ -1438,13 +1440,30 @@ function renderPersonelTab(){
     <table>
       <thead><tr><th>Ad Soyad</th><th>PIN</th><th></th></tr></thead>
       <tbody>
-        ${State.personel.map(p=>`
+        ${State.personel.map(p=>{
+          if(canEdit && personelEditingId === p.id){
+            return `
+              <tr data-edit-id="${p.id}">
+                <td><input type="text" class="editName" value="${p.name}" autocomplete="off" style="margin:0;"></td>
+                <td><input type="text" class="editPin" value="${p.pin}" autocomplete="off" style="margin:0;"></td>
+                <td style="white-space:nowrap;">
+                  <button class="btn small" data-save="${p.id}">Kaydet</button>
+                  <button class="btn ghost small" data-cancel="1">İptal</button>
+                </td>
+              </tr>
+            `;
+          }
+          return `
           <tr>
             <td>${p.name}</td>
             <td style="font-family:var(--mono);">${p.pin}</td>
-            <td>${canEdit ? `<button class="btn danger small" data-id="${p.id}">Sil</button>` : ''}</td>
+            <td style="white-space:nowrap;">${canEdit ? `
+              <button class="btn ghost small" data-edit="${p.id}">Düzenle</button>
+              <button class="btn danger small" data-id="${p.id}">Sil</button>
+            ` : ''}</td>
           </tr>
-        `).join('')}
+        `;
+        }).join('')}
       </tbody>
     </table>
     </div>
@@ -1458,6 +1477,25 @@ function renderPersonelTab(){
         await kvSet('guv-personel', State.personel);
         renderPersonelTab();
       }
+    };
+  });
+  wrap.querySelectorAll('button[data-edit]').forEach(b=>{
+    b.onclick = ()=>{ personelEditingId = b.dataset.edit; renderPersonelTab(); };
+  });
+  wrap.querySelectorAll('button[data-cancel]').forEach(b=>{
+    b.onclick = ()=>{ personelEditingId = null; renderPersonelTab(); };
+  });
+  wrap.querySelectorAll('button[data-save]').forEach(b=>{
+    b.onclick = async ()=>{
+      const row = b.closest('tr');
+      const newName = row.querySelector('.editName').value.trim();
+      const newPin = row.querySelector('.editPin').value.trim();
+      if(!newName || !newPin){ toast('Ad ve PIN boş olamaz.'); return; }
+      State.personel = State.personel.map(p=> p.id===b.dataset.save ? {...p, name:newName, pin:newPin} : p);
+      await kvSet('guv-personel', State.personel);
+      personelEditingId = null;
+      toast('Personel güncellendi.');
+      renderPersonelTab();
     };
   });
   document.getElementById('addPersonelBtn').onclick = async ()=>{
@@ -1512,6 +1550,8 @@ function renderAyarlarTab(){
 }
 
 /* ---------- YÖNETİCİLER TAB ---------- */
+let adminEditingId = null;
+
 function renderYoneticilerTab(){
   const body = document.getElementById('adminBody');
   const canEdit = isFullAdmin();
@@ -1545,14 +1585,37 @@ function renderYoneticilerTab(){
     <table>
       <thead><tr><th>Ad Soyad</th><th>Şifre</th><th>Yetki</th><th></th></tr></thead>
       <tbody>
-        ${State.admins.map(a=>`
+        ${State.admins.map(a=>{
+          if(canEdit && adminEditingId === a.id){
+            return `
+              <tr data-edit-id="${a.id}">
+                <td><input type="text" class="editName" value="${a.name}" autocomplete="off" style="margin:0;"></td>
+                <td><input type="text" class="editPin" value="${a.pin}" autocomplete="off" style="margin:0;"></td>
+                <td>
+                  <select class="editPerm" style="margin:0;">
+                    <option value="full" ${a.permission==='full'?'selected':''}>Tam Yetkili</option>
+                    <option value="readonly" ${a.permission==='readonly'?'selected':''}>Salt Okunur</option>
+                  </select>
+                </td>
+                <td style="white-space:nowrap;">
+                  <button class="btn small" data-save="${a.id}">Kaydet</button>
+                  <button class="btn ghost small" data-cancel="1">İptal</button>
+                </td>
+              </tr>
+            `;
+          }
+          return `
           <tr>
             <td>${a.name}</td>
             <td style="font-family:var(--mono);">${a.pin}</td>
             <td><span class="badge ${a.permission==='full'?'ok':'warn'}">${a.permission==='full'?'TAM YETKİLİ':'SALT OKUNUR'}</span></td>
-            <td>${canEdit ? `<button class="btn danger small" data-id="${a.id}">Sil</button>` : ''}</td>
+            <td style="white-space:nowrap;">${canEdit ? `
+              <button class="btn ghost small" data-edit="${a.id}">Düzenle</button>
+              <button class="btn danger small" data-id="${a.id}">Sil</button>
+            ` : ''}</td>
           </tr>
-        `).join('')}
+        `;
+        }).join('')}
       </tbody>
     </table>
     </div>
@@ -1566,6 +1629,31 @@ function renderYoneticilerTab(){
           State.admins = State.admins.filter(x=>x.id!==a.id);
           await kvSet('guv-yoneticiler', State.admins);
           renderYoneticilerTab();
+        }
+      };
+    });
+    wrap.querySelectorAll('button[data-edit]').forEach(b=>{
+      b.onclick = ()=>{ adminEditingId = b.dataset.edit; renderYoneticilerTab(); };
+    });
+    wrap.querySelectorAll('button[data-cancel]').forEach(b=>{
+      b.onclick = ()=>{ adminEditingId = null; renderYoneticilerTab(); };
+    });
+    wrap.querySelectorAll('button[data-save]').forEach(b=>{
+      b.onclick = async ()=>{
+        const row = b.closest('tr');
+        const newName = row.querySelector('.editName').value.trim();
+        const newPin = row.querySelector('.editPin').value.trim();
+        const newPerm = row.querySelector('.editPerm').value;
+        if(!newName || !newPin){ toast('Ad ve şifre boş olamaz.'); return; }
+        State.admins = State.admins.map(a=> a.id===b.dataset.save ? {...a, name:newName, pin:newPin, permission:newPerm} : a);
+        await kvSet('guv-yoneticiler', State.admins);
+        adminEditingId = null;
+        toast('Yönetici güncellendi.');
+        renderYoneticilerTab();
+        if(State.session.adminId === b.dataset.save){
+          State.session.adminName = newName;
+          State.session.permission = newPerm;
+          render();
         }
       };
     });
