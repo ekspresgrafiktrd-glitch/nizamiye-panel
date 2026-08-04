@@ -193,6 +193,7 @@
 <div class="topbar">
   <div class="brand">▮▮▮ <b>NİZAMİYE</b> KONTROL PANELİ</div>
   <div class="who" style="display:flex;">
+    <button id="shareBtn" title="Paylaş">🔗 Paylaş</button>
     <span id="whoLabel"></span>
     <button id="logoutBtn" style="display:none;">Çıkış</button>
   </div>
@@ -347,34 +348,43 @@ function seedGuvenlikFormu(){
 const State = {
   personel: [],
   forms: [],
-  adminPin: '1234',
+  admins: [],   // [{id, name, pin, permission:'full'|'readonly'}]
   submissions: [],
   scans: [],
   activityLoaded: false, // submissions/scans henüz çekilmedi mi?
-  session: null,   // {role:'personel'|'admin', personelId?, name?}
+  session: null,   // {role:'personel', personelId, name} | {role:'admin', adminId, adminName, permission}
 };
+
+function isFullAdmin(){
+  return !!(State.session && State.session.role==='admin' && State.session.permission !== 'readonly');
+}
 
 /* HIZLI: sadece giriş ekranı için gereken küçük veri. Kayıt sayısı ne kadar
    artarsa artsın bu her zaman hızlı kalır — büyük koleksiyonları okumaz. */
 async function loadCore(){
   try{
-    let [personel, forms, adminPin] = await Promise.all([
+    let [personel, forms, admins, legacyPin] = await Promise.all([
       kvGet('guv-personel', null),
       kvGet('guv-formlar', null),
+      kvGet('guv-yoneticiler', null),
       kvGet('guv-admin-pin', null),
     ]);
     if(personel === null){ personel = SEED_PERSONEL; await kvSet('guv-personel', personel); }
     if(forms === null){ forms = [seedGuvenlikFormu()]; await kvSet('guv-formlar', forms); }
-    if(adminPin === null){ adminPin = '1234'; await kvSet('guv-admin-pin', adminPin); }
+    if(admins === null){
+      // Eski tek-şifreli sistemden geçiş: varsa o şifreyi ilk "tam yetkili" yönetici yap
+      admins = [{id:uid('a'), name:'Yönetici', pin: legacyPin || '1234', permission:'full'}];
+      await kvSet('guv-yoneticiler', admins);
+    }
     State.personel = personel;
     State.forms = forms;
-    State.adminPin = adminPin;
+    State.admins = admins;
     return true;
   }catch(e){
     console.error('loadCore hatası', e);
     State.personel = SEED_PERSONEL;
     State.forms = [seedGuvenlikFormu()];
-    State.adminPin = '1234';
+    State.admins = [{id:uid('a'), name:'Yönetici', pin:'1234', permission:'full'}];
     return false;
   }
 }
@@ -413,6 +423,20 @@ logoutBtn.addEventListener('click', ()=>{
   State.session = null;
   render();
 });
+document.getElementById('shareBtn').addEventListener('click', async ()=>{
+  const shareUrl = SITE_URL;
+  if(navigator.share){
+    try{ await navigator.share({title:'Nizamiye Kontrol Paneli', text:'Nizamiye Kontrol Paneli', url: shareUrl}); }
+    catch(e){ /* kullanıcı iptal etti, sorun değil */ }
+  } else {
+    try{
+      await navigator.clipboard.writeText(shareUrl);
+      toast('Link kopyalandı: ' + shareUrl);
+    }catch(e){
+      prompt('Bu linki kopyalayıp paylaşabilirsiniz:', shareUrl);
+    }
+  }
+});
 
 function render(){
   if(!State.session){
@@ -425,7 +449,7 @@ function render(){
     renderPersonelPanel();
   } else {
     logoutBtn.style.display = 'inline-flex';
-    whoLabel.textContent = `🛠 Yönetici`;
+    whoLabel.textContent = `🛠 ${State.session.adminName}${State.session.permission==='readonly'?' · Salt Okunur':''}`;
     renderAdminPanel();
   }
 }
@@ -461,7 +485,11 @@ function renderLogin(){
     `;
   } else {
     fields.innerHTML = `
-      <label>Yönetici Şifresi</label>
+      <label>Yönetici</label>
+      <select id="loginAdmin">
+        ${State.admins.map(a=>`<option value="${a.id}">${a.name}${a.permission==='readonly'?' (salt okunur)':''}</option>`).join('')}
+      </select>
+      <label>Şifre</label>
       <input type="password" id="loginPin" placeholder="••••" maxlength="12" autocomplete="new-password">
     `;
   }
@@ -477,8 +505,11 @@ function renderLogin(){
       if(pin !== p.pin){ err.textContent = 'PIN hatalı.'; return; }
       sessionToSet = {role:'personel', personelId:p.id, name:p.name};
     } else {
-      if(pin !== State.adminPin){ err.textContent = 'Şifre hatalı.'; return; }
-      sessionToSet = {role:'admin'};
+      const sel = document.getElementById('loginAdmin');
+      const a = State.admins.find(x=>x.id===sel.value);
+      if(!a){ err.textContent = 'Yönetici bulunamadı.'; return; }
+      if(pin !== a.pin){ err.textContent = 'Şifre hatalı.'; return; }
+      sessionToSet = {role:'admin', adminId:a.id, adminName:a.name, permission:a.permission};
     }
     if(!State.activityLoaded){
       const btn = document.getElementById('loginBtn');
@@ -720,6 +751,7 @@ function renderAdminPanel(){
       <button data-t="qrturlari" class="${adminTab==='qrturlari'?'active':''}">QR TURLARI</button>
       <button data-t="formlar" class="${adminTab==='formlar'?'active':''}">FORMLAR</button>
       <button data-t="personel" class="${adminTab==='personel'?'active':''}">PERSONEL</button>
+      <button data-t="yoneticiler" class="${adminTab==='yoneticiler'?'active':''}">YÖNETİCİLER</button>
       <button data-t="ayarlar" class="${adminTab==='ayarlar'?'active':''}">AYARLAR</button>
     </div>
     <div id="adminBody"></div>
@@ -731,6 +763,7 @@ function renderAdminPanel(){
   else if(adminTab === 'qrturlari') renderQrTurlariTab();
   else if(adminTab === 'formlar') renderFormlarTab();
   else if(adminTab === 'personel') renderPersonelTab();
+  else if(adminTab === 'yoneticiler') renderYoneticilerTab();
   else renderAyarlarTab();
 }
 
@@ -1076,6 +1109,7 @@ function newBlankBuilder(){
 
 function renderFormlarTab(){
   const body = document.getElementById('adminBody');
+  const canEdit = isFullAdmin();
   if(formBuilderState){
     renderFormBuilder(body);
     return;
@@ -1084,13 +1118,13 @@ function renderFormlarTab(){
     <div class="card">
       <div class="flex-between">
         <h2 style="margin:0;">Formlar</h2>
-        <button class="btn small" id="newFormBtn">+ Yeni Form Oluştur</button>
+        ${canEdit ? `<button class="btn small" id="newFormBtn">+ Yeni Form Oluştur</button>` : ''}
       </div>
-      <p class="hint">Personelin gördüğü formlar burada yönetilir. Pasif formlar personel ekranında görünmez.</p>
+      <p class="hint">Personelin gördüğü formlar burada yönetilir. Pasif formlar personel ekranında görünmez.${canEdit?'':' (Salt okunur erişim: görüntüleyebilir ve QR yazdırabilirsiniz, değişiklik yapamazsınız.)'}</p>
       <div id="formsListWrap"></div>
     </div>
   `;
-  document.getElementById('newFormBtn').onclick = ()=>{ formBuilderState = newBlankBuilder(); renderFormlarTab(); };
+  if(canEdit) document.getElementById('newFormBtn').onclick = ()=>{ formBuilderState = newBlankBuilder(); renderFormlarTab(); };
 
   const wrap = document.getElementById('formsListWrap');
   if(State.forms.length===0){
@@ -1106,9 +1140,9 @@ function renderFormlarTab(){
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
         <span class="badge ${f.active?'ok':'warn'}">${f.active?'AKTİF':'PASİF'}</span>
         ${f.items.some(i=>i.type==='qr_nokta') ? `<button class="btn ghost small" data-act="printqr" data-id="${f.id}">Tüm QR'ları Yazdır</button>` : ''}
-        <button class="btn ghost small" data-act="toggle" data-id="${f.id}">${f.active?'Pasif Yap':'Aktif Yap'}</button>
-        <button class="btn ghost small" data-act="edit" data-id="${f.id}">Düzenle</button>
-        <button class="btn danger small" data-act="del" data-id="${f.id}">Sil</button>
+        ${canEdit ? `<button class="btn ghost small" data-act="toggle" data-id="${f.id}">${f.active?'Pasif Yap':'Aktif Yap'}</button>` : ''}
+        <button class="btn ghost small" data-act="edit" data-id="${f.id}">${canEdit?'Düzenle':'Görüntüle'}</button>
+        ${canEdit ? `<button class="btn danger small" data-act="del" data-id="${f.id}">Sil</button>` : ''}
       </div>
     </div>
   `).join('');
@@ -1138,65 +1172,74 @@ function renderFormlarTab(){
 
 function renderFormBuilder(body){
   const st = formBuilderState;
+  const canEdit = isFullAdmin();
+  const dis = canEdit ? '' : 'disabled';
   body.innerHTML = `
     <div class="card">
-      <h2>${st.id ? 'Formu Düzenle' : 'Yeni Form Oluştur'}</h2>
+      <h2>${st.id ? (canEdit?'Formu Düzenle':'Formu Görüntüle') : 'Yeni Form Oluştur'}</h2>
       <label>Form Başlığı</label>
-      <input type="text" id="fTitle" value="${st.title}" placeholder="Örn: Gündüz Vardiya Kontrol Formu" autocomplete="off">
+      <input type="text" id="fTitle" value="${st.title}" placeholder="Örn: Gündüz Vardiya Kontrol Formu" autocomplete="off" ${dis}>
       <div class="shift-row" style="display:flex;gap:12px;">
         <div style="flex:1;">
           <label>Vardiya Başlangıç</label>
-          <input type="time" id="fShiftStart" value="${st.shiftStart||'19:00'}">
+          <input type="time" id="fShiftStart" value="${st.shiftStart||'19:00'}" ${dis}>
         </div>
         <div style="flex:1;">
           <label>Vardiya Bitiş</label>
-          <input type="time" id="fShiftEnd" value="${st.shiftEnd||'07:00'}">
+          <input type="time" id="fShiftEnd" value="${st.shiftEnd||'07:00'}" ${dis}>
         </div>
       </div>
       <p class="hint" style="margin-top:6px;">QR noktalarındaki "beklenen tur sayısı" bu vardiya süresine göre hesaplanır. Vardiya gece yarısını geçebilir (örn. 19:00 → 07:00), sorun değil.</p>
       <label>Maddeler</label>
       <div id="itemsBuilder"></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
-        <button class="btn ghost small" id="addItemBtn">+ Madde Ekle</button>
-        <button class="btn ghost small" id="bulkQrBtn">+ Toplu QR Noktası Ekle</button>
-      </div>
+      ${canEdit ? `
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+          <button class="btn ghost small" id="addItemBtn">+ Madde Ekle</button>
+          <button class="btn ghost small" id="bulkQrBtn">+ Toplu QR Noktası Ekle</button>
+        </div>
+      ` : ''}
       <div style="margin-top:22px;display:flex;gap:10px;">
-        <button class="btn" id="saveFormBtn">Kaydet</button>
-        <button class="btn ghost" id="cancelFormBtn">Vazgeç</button>
+        ${canEdit ? `<button class="btn" id="saveFormBtn">Kaydet</button>` : ''}
+        <button class="btn ghost" id="cancelFormBtn">${canEdit?'Vazgeç':'Geri'}</button>
       </div>
     </div>
   `;
-  document.getElementById('fTitle').oninput = e=>{ st.title = e.target.value; };
-  document.getElementById('fShiftStart').oninput = e=>{ st.shiftStart = e.target.value; };
-  document.getElementById('fShiftEnd').oninput = e=>{ st.shiftEnd = e.target.value; };
+  if(canEdit){
+    document.getElementById('fTitle').oninput = e=>{ st.title = e.target.value; };
+    document.getElementById('fShiftStart').oninput = e=>{ st.shiftStart = e.target.value; };
+    document.getElementById('fShiftEnd').oninput = e=>{ st.shiftEnd = e.target.value; };
+    document.getElementById('addItemBtn').onclick = ()=>{
+      st.items.push({id:uid('i'), type:'evethayir', label:''});
+      renderFormBuilder(body);
+    };
+    document.getElementById('bulkQrBtn').onclick = ()=> showBulkQrDialog(st, body);
+  }
   document.getElementById('cancelFormBtn').onclick = ()=>{ formBuilderState=null; renderFormlarTab(); };
-  document.getElementById('addItemBtn').onclick = ()=>{
-    st.items.push({id:uid('i'), type:'evethayir', label:''});
-    renderFormBuilder(body);
-  };
-  document.getElementById('bulkQrBtn').onclick = ()=> showBulkQrDialog(st, body);
 
   const itemsWrap = document.getElementById('itemsBuilder');
   itemsWrap.innerHTML = st.items.map((item,idx)=>`
     <div class="builder-row" data-idx="${idx}">
-      <select class="itype">
+      <select class="itype" ${dis}>
         <option value="evethayir" ${item.type==='evethayir'?'selected':''}>Evet/Hayır</option>
         <option value="not" ${item.type==='not'?'selected':''}>Not (serbest metin)</option>
         <option value="qr_nokta" ${item.type==='qr_nokta'?'selected':''}>QR Kontrol Noktası</option>
         <option value="baslik" ${item.type==='baslik'?'selected':''}>Bölüm Başlığı</option>
       </select>
-      <input type="text" class="ilabel" value="${item.label}" placeholder="Madde metni" autocomplete="off" name="madde-${item.id}">
+      <input type="text" class="ilabel" value="${item.label}" placeholder="Madde metni" autocomplete="off" name="madde-${item.id}" ${dis}>
       ${item.type==='qr_nokta' ? `
         <span style="font-size:12px;color:var(--ink-dim);white-space:nowrap;">Periyot:</span>
-        <input type="number" class="iperiod" value="${item.periodMinutes || 60}" min="5" step="5" style="width:70px;margin:0;" title="Kaç dakikada bir gezilecek">
+        <input type="number" class="iperiod" value="${item.periodMinutes || 60}" min="5" step="5" style="width:70px;margin:0;" title="Kaç dakikada bir gezilecek" ${dis}>
         <span style="font-size:12px;color:var(--ink-dim);">dk</span>
         <button class="btn ghost small" data-qr="${idx}">QR Kodu Gör/Yazdır</button>
       ` : ''}
-      <button class="btn danger small" data-remove="${idx}">Sil</button>
+      ${canEdit ? `<button class="btn danger small" data-remove="${idx}">Sil</button>` : ''}
     </div>
   `).join('');
   itemsWrap.querySelectorAll('.builder-row').forEach(row=>{
     const idx = +row.dataset.idx;
+    const qrBtn = row.querySelector('[data-qr]');
+    if(qrBtn) qrBtn.onclick = ()=> showQrPrintView(st.items[idx]);
+    if(!canEdit) return;
     row.querySelector('.itype').onchange = e=>{
       st.items[idx].type = e.target.value;
       if(e.target.value === 'qr_nokta' && !st.items[idx].periodMinutes){
@@ -1207,14 +1250,13 @@ function renderFormBuilder(body){
     row.querySelector('.ilabel').oninput = e=>{ st.items[idx].label = e.target.value; };
     const periodInput = row.querySelector('.iperiod');
     if(periodInput) periodInput.oninput = e=>{ st.items[idx].periodMinutes = +e.target.value || 60; };
-    const qrBtn = row.querySelector('[data-qr]');
-    if(qrBtn) qrBtn.onclick = ()=> showQrPrintView(st.items[idx]);
     row.querySelector('[data-remove]').onclick = ()=>{
       st.items.splice(idx,1);
       renderFormBuilder(body);
     };
   });
 
+  if(!canEdit) return;
   document.getElementById('saveFormBtn').onclick = async ()=>{
     if(!st.title.trim()){ toast('Form başlığı gerekli.'); return; }
     const cleanItems = st.items.filter(i=>i.label.trim());
@@ -1373,18 +1415,21 @@ function showQrPrintView(item){
 /* ---------- PERSONEL TAB ---------- */
 function renderPersonelTab(){
   const body = document.getElementById('adminBody');
+  const canEdit = isFullAdmin();
   body.innerHTML = `
     <div class="card">
       <h2>Personel</h2>
-      <p class="hint">Personel giriş ekranındaki isim listesini ve PIN kodlarını buradan yönetin.</p>
+      <p class="hint">Personel giriş ekranındaki isim listesini ve PIN kodlarını buradan yönetin.${canEdit?'':' (Salt okunur erişim: sadece görüntüleyebilirsiniz.)'}</p>
       <div id="personelListWrap"></div>
-      <div style="border-top:1px solid var(--line);margin-top:18px;padding-top:18px;">
-        <div class="builder-row">
-          <input type="text" id="newPName" placeholder="Ad Soyad" style="flex:2;" autocomplete="off">
-          <input type="text" id="newPPin" placeholder="PIN (örn: 4 haneli)" style="flex:1;" autocomplete="off">
-          <button class="btn small" id="addPersonelBtn">Ekle</button>
+      ${canEdit ? `
+        <div style="border-top:1px solid var(--line);margin-top:18px;padding-top:18px;">
+          <div class="builder-row">
+            <input type="text" id="newPName" placeholder="Ad Soyad" style="flex:2;" autocomplete="off">
+            <input type="text" id="newPPin" placeholder="PIN (örn: 4 haneli)" style="flex:1;" autocomplete="off">
+            <button class="btn small" id="addPersonelBtn">Ekle</button>
+          </div>
         </div>
-      </div>
+      ` : ''}
     </div>
   `;
   const wrap = document.getElementById('personelListWrap');
@@ -1397,13 +1442,14 @@ function renderPersonelTab(){
           <tr>
             <td>${p.name}</td>
             <td style="font-family:var(--mono);">${p.pin}</td>
-            <td><button class="btn danger small" data-id="${p.id}">Sil</button></td>
+            <td>${canEdit ? `<button class="btn danger small" data-id="${p.id}">Sil</button>` : ''}</td>
           </tr>
         `).join('')}
       </tbody>
     </table>
     </div>
   `;
+  if(!canEdit) return;
   wrap.querySelectorAll('button[data-id]').forEach(b=>{
     b.onclick = async ()=>{
       const p = State.personel.find(x=>x.id===b.dataset.id);
@@ -1428,50 +1474,112 @@ function renderPersonelTab(){
 /* ---------- AYARLAR TAB ---------- */
 function renderAyarlarTab(){
   const body = document.getElementById('adminBody');
+  const canEdit = isFullAdmin();
   body.innerHTML = `
-    <div class="card">
-      <h2>Ayarlar</h2>
-      <p class="hint">Yönetici şifresini buradan değiştirebilirsiniz. Bu, güçlü bir güvenlik doğrulaması değildir; sadece panele erişimi sınırlar.</p>
-      <label>Yönetici Şifresi</label>
-      <input type="text" id="newAdminPin" value="${State.adminPin}" autocomplete="off">
-      <button class="btn small" id="savePinBtn">Kaydet</button>
-    </div>
     <div class="card">
       <h2>Eski Kayıtları Temizle</h2>
       <p class="hint">
         Seçtiğiniz tarihten <b>önceki</b> tüm gönderimler kalıcı olarak silinir. Bu işlem geri alınamaz.
         Toplam ${State.submissions.length} kayıt var.
       </p>
-      <label>Bu tarihten önceki kayıtları sil</label>
-      <input type="date" id="cleanupDate">
-      <button class="btn danger small" id="cleanupBtn">Eski Kayıtları Sil</button>
+      ${canEdit ? `
+        <label>Bu tarihten önceki kayıtları sil</label>
+        <input type="date" id="cleanupDate">
+        <button class="btn danger small" id="cleanupBtn">Eski Kayıtları Sil</button>
+      ` : `<p class="hint" style="color:var(--red);">Bu işlem için tam yetkili yönetici girişi gerekiyor (siz salt-okunur erişimle giriş yaptınız).</p>`}
       <p class="hint" style="margin-top:14px;margin-bottom:0;">
         Alternatif: verinin bulunduğu Google E-Tablosu'nu doğrudan açıp "Gonderimler" sekmesinde
         istediğiniz satırları elle de silebilirsiniz — panel bunu otomatik yansıtır.
       </p>
     </div>
   `;
-  document.getElementById('savePinBtn').onclick = async ()=>{
-    const v = document.getElementById('newAdminPin').value.trim();
-    if(!v){ toast('Şifre boş olamaz.'); return; }
-    State.adminPin = v;
-    await kvSet('guv-admin-pin', v);
-    toast('Şifre güncellendi.');
-  };
-  document.getElementById('cleanupBtn').onclick = async ()=>{
-    const cutoff = document.getElementById('cleanupDate').value;
-    if(!cutoff){ toast('Önce bir tarih seçin.'); return; }
-    if(!confirm(`${trDate(cutoff)} tarihinden ÖNCEKİ tüm gönderimler kalıcı olarak silinecek. Emin misiniz?`)) return;
-    const r = await deleteSubmissionsBeforeRemote(cutoff);
-    if(r && r.ok){
-      State.submissions = await getSubmissionsRemote();
-      State.scans = await getScansRemote();
-      toast(`${r.deleted} kayıt silindi.`);
-      renderAyarlarTab();
-    } else {
-      toast('Silme işlemi başarısız oldu. Bağlantıyı kontrol edin.');
-    }
-  };
+  if(canEdit){
+    document.getElementById('cleanupBtn').onclick = async ()=>{
+      const cutoff = document.getElementById('cleanupDate').value;
+      if(!cutoff){ toast('Önce bir tarih seçin.'); return; }
+      if(!confirm(`${trDate(cutoff)} tarihinden ÖNCEKİ tüm gönderimler kalıcı olarak silinecek. Emin misiniz?`)) return;
+      const r = await deleteSubmissionsBeforeRemote(cutoff);
+      if(r && r.ok){
+        State.submissions = await getSubmissionsRemote();
+        State.scans = await getScansRemote();
+        toast(`${r.deleted} kayıt silindi.`);
+        renderAyarlarTab();
+      } else {
+        toast('Silme işlemi başarısız oldu. Bağlantıyı kontrol edin.');
+      }
+    };
+  }
+}
+
+/* ---------- YÖNETİCİLER TAB ---------- */
+function renderYoneticilerTab(){
+  const body = document.getElementById('adminBody');
+  const canEdit = isFullAdmin();
+  body.innerHTML = `
+    <div class="card">
+      <h2>Yöneticiler</h2>
+      <p class="hint">
+        <b>Tam yetkili</b> yöneticiler her şeyi görüp değiştirebilir (form/personel düzenleme, kayıt silme).
+        <b>Salt okunur</b> yöneticiler her şeyi görebilir, PDF alabilir, ama hiçbir şeyi değiştiremez/silemez —
+        sadece takip eden yöneticiler için uygundur.
+      </p>
+      <div id="adminListWrap"></div>
+      ${canEdit ? `
+        <div style="border-top:1px solid var(--line);margin-top:18px;padding-top:18px;">
+          <div class="builder-row">
+            <input type="text" id="newAdminName" placeholder="Ad Soyad" style="flex:2;" autocomplete="off">
+            <input type="text" id="newAdminPin2" placeholder="Şifre" style="flex:1;" autocomplete="off">
+            <select id="newAdminPerm" style="flex:1;">
+              <option value="full">Tam Yetkili</option>
+              <option value="readonly">Salt Okunur</option>
+            </select>
+            <button class="btn small" id="addAdminBtn">Ekle</button>
+          </div>
+        </div>
+      ` : `<p class="hint" style="color:var(--red);">Yönetici eklemek/silmek için tam yetkili giriş gerekiyor.</p>`}
+    </div>
+  `;
+  const wrap = document.getElementById('adminListWrap');
+  wrap.innerHTML = `
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>Ad Soyad</th><th>Şifre</th><th>Yetki</th><th></th></tr></thead>
+      <tbody>
+        ${State.admins.map(a=>`
+          <tr>
+            <td>${a.name}</td>
+            <td style="font-family:var(--mono);">${a.pin}</td>
+            <td><span class="badge ${a.permission==='full'?'ok':'warn'}">${a.permission==='full'?'TAM YETKİLİ':'SALT OKUNUR'}</span></td>
+            <td>${canEdit ? `<button class="btn danger small" data-id="${a.id}">Sil</button>` : ''}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+    </div>
+  `;
+  if(canEdit){
+    wrap.querySelectorAll('button[data-id]').forEach(b=>{
+      b.onclick = async ()=>{
+        if(State.admins.length <= 1){ toast('En az bir yönetici kalmalı.'); return; }
+        const a = State.admins.find(x=>x.id===b.dataset.id);
+        if(confirm(`${a.name} silinsin mi?`)){
+          State.admins = State.admins.filter(x=>x.id!==a.id);
+          await kvSet('guv-yoneticiler', State.admins);
+          renderYoneticilerTab();
+        }
+      };
+    });
+    document.getElementById('addAdminBtn').onclick = async ()=>{
+      const name = document.getElementById('newAdminName').value.trim();
+      const pin = document.getElementById('newAdminPin2').value.trim();
+      const permission = document.getElementById('newAdminPerm').value;
+      if(!name || !pin){ toast('Ad ve şifre gerekli.'); return; }
+      State.admins.push({id:uid('a'), name, pin, permission});
+      await kvSet('guv-yoneticiler', State.admins);
+      toast('Yönetici eklendi.');
+      renderYoneticilerTab();
+    };
+  }
 }
 
 /* ============================================================
