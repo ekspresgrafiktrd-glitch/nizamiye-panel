@@ -307,6 +307,10 @@ async function addSubmissionRemote(sub){
   try{ await db.collection('submissions').doc(sub.id).set(sub); return true; }
   catch(e){ console.error('addSubmission hatası', e); return false; }
 }
+async function deleteSubmissionRemote(id){
+  try{ await db.collection('submissions').doc(id).delete(); return true; }
+  catch(e){ console.error('submission silme hatası', e); return false; }
+}
 async function deleteSubmissionsBeforeRemote(cutoff){
   try{
     let deleted = 0;
@@ -1210,6 +1214,7 @@ function submissionStatus(sub){
 let gFilterDate = '', gFilterPersonel = '', gFilterForm = '', gExpanded = null;
 
 function renderGonderimlerTab(){
+  const canEdit = isFullAdmin();
   const body = document.getElementById('adminBody');
   body.innerHTML = `
     <div class="card">
@@ -1294,6 +1299,7 @@ function renderGonderimlerTab(){
             <td style="white-space:nowrap;">
               <button class="btn ghost small" data-id="${s.id}">Detay</button>
               <button class="btn ghost small" data-pdf="${s.id}">PDF</button>
+              ${canEdit ? `<button class="btn danger small" data-delsub="${s.id}" title="Bu gönderimi sil (örn. test kaydı)">Sil</button>` : ''}
             </td>
           </tr>
           ${gExpanded===s.id ? `<tr><td colspan="7">${renderSubmissionDetail(s)}</td></tr>` : ''}
@@ -1312,6 +1318,25 @@ function renderGonderimlerTab(){
       if(sub) printHtmlDocument(`${sub.formTitle} — ${trDate(sub.tarih)}`, buildSubmissionPrintBody(sub));
     };
   });
+  if(canEdit){
+    tableWrap.querySelectorAll('button[data-delsub]').forEach(b=>{
+      b.onclick = async ()=>{
+        const sub = list.find(s=>s.id===b.dataset.delsub);
+        const uyari = sub ? `${sub.personelName} — ${trDate(sub.tarih)} — ${sub.formTitle}` : 'bu gönderim';
+        if(!confirm(`${uyari} kalıcı olarak silinsin mi? (Örn. bir test kaydıysa.) Bu işlem geri alınamaz; QR taramaları etkilenmez, onları ayrıca QR Turları sekmesinden silebilirsiniz.`)) return;
+        b.disabled = true; b.textContent = 'Siliniyor…';
+        const ok = await deleteSubmissionRemote(b.dataset.delsub);
+        if(ok){
+          State.submissions = State.submissions.filter(s=>s.id!==b.dataset.delsub);
+          toast('✓ Gönderim silindi.');
+          renderGonderimlerTab();
+        } else {
+          b.disabled = false; b.textContent = 'Sil';
+          toast('⚠ Silinemedi, bağlantınızı kontrol edin.');
+        }
+      };
+    });
+  }
 }
 
 /* ---------- Kapsama Kontrolü: hiç doldurulmamış olabilecek günleri bulur ---------- */
