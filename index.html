@@ -381,6 +381,33 @@ function daysUntil(iso){
   const target = new Date(iso+'T00:00:00');
   return Math.round((target - today) / 86400000);
 }
+
+/* ============================================================
+   QR KONUM DOĞRULAMA — bir yönetici, kontrol noktasına GİTMEDEN,
+   sadece kendi telefonundan "referans konum" tanımlayabilir; bu konum
+   sabit koordinat olarak saklanır. Personel taradığında telefonun anlık
+   konumu bu referansla kıyaslanır. İç mekanlarda GPS hassasiyeti düşük
+   olabileceğinden bu bir UYARI'dır, taramayı engellemez.
+   ============================================================ */
+function haversineMetre(lat1, lng1, lat2, lng2){
+  const R = 6371000;
+  const toRad = d => d * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+function getCurrentPositionSafe(timeoutMs){
+  return new Promise((resolve)=>{
+    if(!('geolocation' in navigator)){ resolve(null); return; }
+    const timer = setTimeout(()=>resolve(null), timeoutMs || 6000);
+    navigator.geolocation.getCurrentPosition(
+      pos => { clearTimeout(timer); resolve({lat:pos.coords.latitude, lng:pos.coords.longitude, dogruluk:pos.coords.accuracy}); },
+      err => { clearTimeout(timer); resolve(null); },
+      { enableHighAccuracy:true, timeout:(timeoutMs||6000), maximumAge:0 }
+    );
+  });
+}
 function remainingBadgeHtml(iso){
   if(!iso) return `<span class="badge idle">— tanımsız</span>`;
   const days = daysUntil(iso);
@@ -475,6 +502,8 @@ function seedGuvenlikFormu(){
 /* ============================================================
    GLOBAL STATE
    ============================================================ */
+const SEED_QR_AYARLAR = { aktif:true, toleransMetre:150 };
+
 const State = {
   personel: [],
   forms: [],
@@ -483,6 +512,7 @@ const State = {
   scans: [],
   activityLoaded: false, // submissions/scans henüz çekilmedi mi?
   session: null,   // {role:'personel', personelId, name} | {role:'admin', adminId, adminName, permission}
+  qrAyarlar: SEED_QR_AYARLAR,
   // --- Araç Takip modülü ---
   araclar: [],
   aracAyarlar: SEED_ARAC_AYARLAR,
@@ -498,13 +528,14 @@ function isFullAdmin(){
    artarsa artsın bu her zaman hızlı kalır — büyük koleksiyonları okumaz. */
 async function loadCore(){
   try{
-    let [personel, forms, admins, legacyPin, araclar, aracAyarlar] = await Promise.all([
+    let [personel, forms, admins, legacyPin, araclar, aracAyarlar, qrAyarlar] = await Promise.all([
       kvGet('guv-personel', null),
       kvGet('guv-formlar', null),
       kvGet('guv-yoneticiler', null),
       kvGet('guv-admin-pin', null),
       kvGet('at-araclar', null),
       kvGet('at-ayarlar', null),
+      kvGet('guv-qr-ayarlar', null),
     ]);
     if(personel === null){ personel = SEED_PERSONEL; await kvSet('guv-personel', personel); }
     if(forms === null){ forms = [seedGuvenlikFormu()]; await kvSet('guv-formlar', forms); }
@@ -515,11 +546,13 @@ async function loadCore(){
     }
     if(araclar === null){ araclar = seedAraclar(); await kvSet('at-araclar', araclar); }
     if(aracAyarlar === null){ aracAyarlar = SEED_ARAC_AYARLAR; await kvSet('at-ayarlar', aracAyarlar); }
+    if(qrAyarlar === null){ qrAyarlar = SEED_QR_AYARLAR; await kvSet('guv-qr-ayarlar', qrAyarlar); }
     State.personel = personel;
     State.forms = forms;
     State.admins = admins;
     State.araclar = araclar;
     State.aracAyarlar = aracAyarlar;
+    State.qrAyarlar = qrAyarlar;
     return true;
   }catch(e){
     console.error('loadCore hatası', e);
@@ -528,6 +561,7 @@ async function loadCore(){
     State.admins = [{id:uid('a'), name:'Yönetici', pin:'1234', permission:'full', email:'', telefon:''}];
     State.araclar = seedAraclar();
     State.aracAyarlar = SEED_ARAC_AYARLAR;
+    State.qrAyarlar = SEED_QR_AYARLAR;
     return false;
   }
 }
@@ -1171,10 +1205,12 @@ function renderGonderimlerTab(){
       <div class="flex-between">
         <h2 style="margin:0;">Gönderilen Formlar</h2>
         <div style="display:flex;gap:8px;">
+          <button class="btn ghost small" id="coverageBtn">📋 Kapsama Kontrolü</button>
           <button class="btn ghost small" id="printListBtn">🖨 Listeyi PDF Yap</button>
           <button class="btn ghost small" id="refreshSubsBtn">🔄 Yenile</button>
         </div>
       </div>
+      <p class="hint" style="margin:-8px 0 18px;">"Kapsama Kontrolü", seçtiğiniz tarih aralığında hangi günler için o form <b>hiç doldurulmamış</b> olabileceğini gösterir — personel gelmediğinde veya unuttuğunda o gün için otomatik olarak hiçbir kayıt oluşmadığından, gözden kaçabilir.</p>
       <div class="filters" style="margin-bottom:18px;">
         <div><label>Tarih</label><input type="date" id="fDate" value="${gFilterDate}"></div>
         <div><label>Personel</label>
@@ -1202,6 +1238,7 @@ function renderGonderimlerTab(){
     await loadActivityData();
     renderGonderimlerTab();
   };
+  document.getElementById('coverageBtn').onclick = ()=> showCoverageCheck();
 
   let list = [...State.submissions].sort((a,b)=> b.tarih.localeCompare(a.tarih) || b.olusturulma.localeCompare(a.olusturulma));
   if(gFilterDate) list = list.filter(s=>s.tarih===gFilterDate);
@@ -1264,6 +1301,72 @@ function renderGonderimlerTab(){
       if(sub) printHtmlDocument(`${sub.formTitle} — ${trDate(sub.tarih)}`, buildSubmissionPrintBody(sub));
     };
   });
+}
+
+/* ---------- Kapsama Kontrolü: hiç doldurulmamış olabilecek günleri bulur ---------- */
+function isoRangeList(startIso, endIso){
+  const out = [];
+  let d = new Date(startIso+'T00:00:00');
+  const end = new Date(endIso+'T00:00:00');
+  while(d <= end){
+    out.push(d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'));
+    d.setDate(d.getDate()+1);
+  }
+  return out;
+}
+function showCoverageCheck(){
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay';
+  const defaultEnd = todayStr();
+  const defaultStartDate = new Date(defaultEnd+'T00:00:00'); defaultStartDate.setDate(defaultStartDate.getDate()-6);
+  const defaultStart = defaultStartDate.getFullYear()+'-'+String(defaultStartDate.getMonth()+1).padStart(2,'0')+'-'+String(defaultStartDate.getDate()).padStart(2,'0');
+  overlay.innerHTML = `
+    <div class="card" style="max-width:560px;">
+      <h2>📋 Kapsama Kontrolü</h2>
+      <p class="hint">Seçilen form ve tarih aralığında, o form için <b>hiç gönderim kaydı bulunmayan</b> (muhtemelen kimsenin doldurmadığı) günleri listeler. Bugünün vardiyası ve gelecek tarihler hariç tutulur (henüz sürmekte olabilir).</p>
+      <label>Form</label>
+      <select id="covForm">
+        ${State.forms.map(f=>`<option value="${f.id}">${f.title}</option>`).join('')}
+      </select>
+      <div style="display:flex;gap:12px;">
+        <div style="flex:1;"><label>Başlangıç</label><input type="date" id="covStart" value="${defaultStart}"></div>
+        <div style="flex:1;"><label>Bitiş</label><input type="date" id="covEnd" value="${defaultEnd}"></div>
+      </div>
+      <button class="btn small" id="covRunBtn">Kontrol Et</button>
+      <div id="covResult" style="margin-top:16px;"></div>
+      <div style="margin-top:16px;">
+        <button class="btn ghost" id="covCloseBtn">Kapat</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById('covCloseBtn').onclick = ()=> overlay.remove();
+  document.getElementById('covRunBtn').onclick = ()=>{
+    const formId = document.getElementById('covForm').value;
+    const start = document.getElementById('covStart').value;
+    const end = document.getElementById('covEnd').value;
+    const resultEl = document.getElementById('covResult');
+    if(!formId || !start || !end){ toast('Form ve tarih aralığı seçin.'); return; }
+    if(start > end){ toast('Başlangıç, bitişten sonra olamaz.'); return; }
+    const today = todayStr();
+    const dates = isoRangeList(start, end).filter(d => d < today); // bugün ve ileri tarihler hariç
+    const existing = new Set(State.submissions.filter(s=>s.formId===formId).map(s=>s.tarih));
+    const missing = dates.filter(d => !existing.has(d));
+    if(dates.length === 0){
+      resultEl.innerHTML = `<div class="empty">Seçilen aralıkta değerlendirilecek geçmiş gün yok.</div>`;
+    } else if(missing.length === 0){
+      resultEl.innerHTML = `<div style="padding:14px 16px;border-radius:8px;background:rgba(35,135,90,.12);border:1px solid var(--green);color:var(--green);font-weight:700;">✓ ${dates.length} günün hepsi için kayıt bulundu — eksik gün yok.</div>`;
+    } else {
+      resultEl.innerHTML = `
+        <div style="padding:14px 16px;border-radius:8px;background:rgba(200,56,43,.1);border:1px solid var(--red);color:var(--red);font-weight:700;margin-bottom:10px;">
+          ⚠ ${missing.length} / ${dates.length} günde hiç kayıt bulunamadı:
+        </div>
+        <div class="table-scroll"><table><tbody>
+          ${missing.sort().reverse().map(d=>`<tr><td style="font-family:var(--mono);">${trDate(d)}</td></tr>`).join('')}
+        </tbody></table></div>
+      `;
+    }
+  };
 }
 
 /* ---------- QR TURLARI (ana formdan bağımsız, dönemsel devriye günlüğü) ---------- */
@@ -1363,9 +1466,10 @@ function renderQrTurlariTab(){
             gapWarning = `<span class="badge warn" style="margin-left:8px;"><span class="lamp warn"></span> ${formatTime(scans[idx-1].saat)} → ${formatTime(s.saat)} arası ${gapMin} dk boşluk</span>`;
           }
         }
+        const locWarning = s.konumUyari ? `<span class="badge over" style="margin-left:8px;" title="Bu telefonun taradığı anki konumu, noktaya tanımlı referans konumdan ~${s.mesafeMetre}m uzaktaydı.">📍 Konum uyuşmuyor (~${s.mesafeMetre}m)</span>` : '';
         return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px dashed var(--line);font-size:13px;flex-wrap:wrap;gap:4px;">
           <span>🕐 ${formatTime(s.saat)} · ${s.personelName}</span>
-          <span>${gapWarning}</span>
+          <span>${gapWarning}${locWarning}</span>
         </div>`;
       }).join('');
     }
@@ -1476,10 +1580,11 @@ function renderSubmissionDetail(sub){
         }
         if(item.type==='qr_nokta'){
           const scan = findLatestScan(item.id, sub.tarih);
+          const locWarn = (scan && scan.konumUyari) ? `<span class="badge over" title="Referans konumdan ~${scan.mesafeMetre}m uzakta tarandı">📍 ~${scan.mesafeMetre}m</span>` : '';
           return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:13px;padding:4px 0;border-bottom:1px dashed var(--line);">
             <span>${item.label}</span>
             <span style="display:flex;align-items:center;gap:8px;">
-              ${scan ? `<span class="ans-time">🕐 ${formatTime(scan.saat)} · ${scan.personelName}</span><span style="color:var(--green);font-weight:700;">✓ DOĞRULANDI</span>` : '<span style="color:var(--red);font-weight:700;">TARANMADI</span>'}
+              ${scan ? `<span class="ans-time">🕐 ${formatTime(scan.saat)} · ${scan.personelName}</span><span style="color:var(--green);font-weight:700;">✓ DOĞRULANDI</span>${locWarn}` : '<span style="color:var(--red);font-weight:700;">TARANMADI</span>'}
             </span>
           </div>`;
         }
@@ -1894,6 +1999,8 @@ function renderFormBuilder(body){
         <input type="number" class="iperiod" value="${item.periodMinutes || 60}" min="5" step="5" style="width:70px;margin:0;" title="Kaç dakikada bir gezilecek" ${dis}>
         <span style="font-size:12px;color:var(--ink-dim);">dk</span>
         <button class="btn ghost small" data-qr="${idx}">QR Kodu Gör/Yazdır</button>
+        ${canEdit ? `<button class="btn ghost small" data-loc="${idx}">${item.lat!=null?'📍 Konumu Güncelle':'📍 Konum Tanımla'}</button>` : ''}
+        ${item.lat!=null ? `<span class="badge ok" style="white-space:nowrap;" title="Tanımlanma: ${item.konumTarihi?new Date(item.konumTarihi).toLocaleString('tr-TR'):''}">📍 Tanımlı</span>` : `<span class="badge idle" style="white-space:nowrap;">📍 Tanımsız</span>`}
       ` : ''}
       ${canEdit ? `<button class="btn danger small" data-remove="${idx}">Sil</button>` : ''}
     </div>
@@ -1902,6 +2009,22 @@ function renderFormBuilder(body){
     const idx = +row.dataset.idx;
     const qrBtn = row.querySelector('[data-qr]');
     if(qrBtn) qrBtn.onclick = ()=> showQrPrintView(st.items[idx]);
+    const locBtn = row.querySelector('[data-loc]');
+    if(locBtn) locBtn.onclick = async ()=>{
+      locBtn.disabled = true; locBtn.textContent = 'Konum alınıyor…';
+      const pos = await getCurrentPositionSafe(8000);
+      locBtn.disabled = false; locBtn.textContent = st.items[idx].lat!=null ? '📍 Konumu Güncelle' : '📍 Konum Tanımla';
+      if(!pos){
+        toast('⚠ Konum alınamadı — tarayıcının konum iznini kontrol edin (bu, telefonunuzda şu an bulunduğunuz noktayı referans olarak kaydetmek için gerekiyor).');
+        return;
+      }
+      st.items[idx].lat = pos.lat;
+      st.items[idx].lng = pos.lng;
+      st.items[idx].konumDogruluk = pos.dogruluk;
+      st.items[idx].konumTarihi = new Date().toISOString();
+      toast(`✓ Konum kaydedildi (yaklaşık doğruluk: ${Math.round(pos.dogruluk)}m). Kaydetmeyi unutmayın.`);
+      renderFormBuilder(body);
+    };
     if(!canEdit) return;
     row.querySelector('.itype').onchange = e=>{
       st.items[idx].type = e.target.value;
@@ -2212,6 +2335,23 @@ function renderAyarlarTab(){
     </div>
 
     <div class="card">
+      <h2>📍 QR Konum Doğrulama</h2>
+      <p class="hint">
+        Bir kontrol noktasının QR'ına "Konum Tanımla" ile referans konum tanımlarsanız (Formlar sekmesi → ilgili
+        maddenin yanında), personel o noktayı taradığında telefonunun anlık konumu bu referansla kıyaslanır.
+        Aşağıdaki mesafeden fazla uzaksa (örn. QR'ın fotoğrafı çekilip başka yerden okutulmuşsa) tarama
+        <b>reddedilmez, sadece "Konum uyuşmuyor" olarak işaretlenir</b> — QR Turları sekmesinde görünür.
+        İç mekanlarda telefon GPS hassasiyeti düşebileceğinden toleransı çok dar tutmayın.
+      </p>
+      <label style="display:flex;align-items:center;font-family:var(--sans);">
+        <input type="checkbox" id="qrLocAktifChk" ${State.qrAyarlar.aktif?'checked':''} ${canEdit?'':'disabled'}> Konum doğrulaması açık
+      </label>
+      <label>Tolerans (metre)</label>
+      <input type="number" min="10" id="qrLocToleransInput" value="${State.qrAyarlar.toleransMetre||150}" ${canEdit?'':'disabled'}>
+      ${canEdit ? `<button class="btn small" id="saveQrLocBtn">Kaydet</button>` : ''}
+    </div>
+
+    <div class="card">
       <h2>🚗 Araç Takip — Bildirim Ayarları</h2>
       <p class="hint">
         Her tarih türü için kaç gün kala uyarı mail'i gitsin, ayrı ayrı belirleyin (örn. Muayene için "5" yazarsanız,
@@ -2252,6 +2392,15 @@ function renderAyarlarTab(){
     </div>
   `;
   if(canEdit){
+    document.getElementById('saveQrLocBtn').onclick = async ()=>{
+      const tol = parseInt(document.getElementById('qrLocToleransInput').value, 10);
+      State.qrAyarlar = {
+        aktif: document.getElementById('qrLocAktifChk').checked,
+        toleransMetre: isNaN(tol) ? 150 : tol,
+      };
+      await kvSet('guv-qr-ayarlar', State.qrAyarlar);
+      toast('QR konum ayarları kaydedildi.');
+    };
     document.getElementById('cleanupBtn').onclick = async ()=>{
       const cutoff = document.getElementById('cleanupDate').value;
       if(!cutoff){ toast('Önce bir tarih seçin.'); return; }
@@ -2454,10 +2603,22 @@ function rememberPersonelId(id){
 }
 
 async function submitScan(itemId, label, p){
+  const item = findItemById(itemId);
+  let konumVerisi = { konumVarMi:false, mesafeMetre:null, konumUyari:false };
+  if(State.qrAyarlar.aktif && item && item.lat!=null && item.lng!=null){
+    const pos = await getCurrentPositionSafe(7000);
+    if(pos){
+      const mesafe = haversineMetre(item.lat, item.lng, pos.lat, pos.lng);
+      const tolerans = State.qrAyarlar.toleransMetre || 150;
+      konumVerisi = { konumVarMi:true, mesafeMetre: Math.round(mesafe), konumUyari: mesafe > tolerans };
+    }
+    // pos alınamazsa (izin verilmedi/zaman aşımı): konumVarMi false kalır, tarama yine de kaydedilir — engellemiyoruz.
+  }
   return await logScanRemote({
     itemId, checkpointLabel: label,
     personelId: p.id, personelName: p.name,
-    tarih: todayStr(), saat: new Date().toISOString()
+    tarih: todayStr(), saat: new Date().toISOString(),
+    ...konumVerisi,
   });
 }
 
@@ -2480,7 +2641,7 @@ function renderScanConfirm(){
     `;
     document.getElementById('scanQuickBtn').onclick = async ()=>{
       const btn = document.getElementById('scanQuickBtn');
-      btn.disabled = true; btn.textContent = 'Kaydediliyor…';
+      btn.disabled = true; btn.textContent = 'Konum kontrol ediliyor…';
       const ok = await submitScan(SCAN_ITEM_ID, label, remembered);
       if(ok){ showScanSuccess(label, remembered.name); }
       else{
@@ -2518,7 +2679,7 @@ function renderScanConfirmFull(item, label){
     if(!p){ err.textContent = 'Personel bulunamadı.'; return; }
     if(pin !== p.pin){ err.textContent = 'PIN hatalı.'; return; }
     const btn = document.getElementById('scanConfirmBtn');
-    btn.disabled = true; btn.textContent = 'Kaydediliyor…';
+    btn.disabled = true; btn.textContent = 'Konum kontrol ediliyor…';
     const ok = await submitScan(SCAN_ITEM_ID, label, p);
     if(ok){
       rememberPersonelId(p.id);
