@@ -75,6 +75,13 @@
   }
   .role-toggle button.active{background:var(--amber);color:#fff8ee;font-weight:700;}
 
+  .person-pick{display:flex;flex-direction:column;gap:8px;margin-bottom:16px;max-height:260px;overflow-y:auto;}
+  .person-pick-btn{
+    width:100%;text-align:left;padding:12px 14px;border-radius:8px;border:1px solid var(--line);
+    background:var(--panel-2);color:var(--ink);font-size:14px;font-family:var(--sans);cursor:pointer;
+  }
+  .person-pick-btn.on{border-color:var(--amber);background:rgba(185,106,18,.12);font-weight:700;}
+
   label{display:block;font-size:12px;color:var(--ink-dim);margin-bottom:6px;font-family:var(--mono);}
   select, input[type=password], input[type=text], input[type=date], textarea{
     width:100%;background:var(--panel-2);border:1px solid var(--line);color:var(--ink);
@@ -441,8 +448,41 @@ function toast(msg){
 const app = document.getElementById('app');
 const whoLabel = document.getElementById('whoLabel');
 const logoutBtn = document.getElementById('logoutBtn');
+
+function saveSession(session){
+  try{ localStorage.setItem('guv_session', JSON.stringify(session)); }catch(e){ /* önemli değil */ }
+}
+function loadSavedSession(){
+  try{
+    const raw = localStorage.getItem('guv_session');
+    if(!raw) return null;
+    return JSON.parse(raw);
+  }catch(e){ return null; }
+}
+function clearSavedSession(){
+  try{ localStorage.removeItem('guv_session'); }catch(e){ /* önemli değil */ }
+}
+/* Kayıtlı oturumu, güncel personel/yönetici listesiyle doğrulayıp geri yükler
+   (o kişi silinmişse veya yetkisi değişmişse eski oturum kullanılmaz). */
+function restoreSessionIfValid(){
+  const saved = loadSavedSession();
+  if(!saved) return null;
+  if(saved.role === 'personel'){
+    const p = State.personel.find(x=>x.id===saved.personelId);
+    if(!p) return null;
+    return {role:'personel', personelId:p.id, name:p.name};
+  }
+  if(saved.role === 'admin'){
+    const a = State.admins.find(x=>x.id===saved.adminId);
+    if(!a) return null;
+    return {role:'admin', adminId:a.id, adminName:a.name, permission:a.permission};
+  }
+  return null;
+}
+
 logoutBtn.addEventListener('click', ()=>{
   State.session = null;
+  clearSavedSession();
   render();
 });
 document.getElementById('shareBtn').addEventListener('click', async ()=>{
@@ -478,6 +518,8 @@ function render(){
 
 let loginRole = 'personel';
 
+let loginSelectedId = null;
+
 function renderLogin(){
   app.innerHTML = `
     <div class="login-shell">
@@ -492,43 +534,43 @@ function renderLogin(){
       <button class="btn" id="loginBtn" style="width:100%;">Giriş Yap</button>
     </div>
   `;
-  document.getElementById('roleP').onclick = ()=>{ loginRole='personel'; renderLogin(); };
-  document.getElementById('roleA').onclick = ()=>{ loginRole='admin'; renderLogin(); };
+  document.getElementById('roleP').onclick = ()=>{ loginRole='personel'; loginSelectedId=null; renderLogin(); };
+  document.getElementById('roleA').onclick = ()=>{ loginRole='admin'; loginSelectedId=null; renderLogin(); };
+
+  const list = loginRole === 'personel' ? State.personel : State.admins;
+  if(loginSelectedId === null && list.length){ loginSelectedId = list[0].id; }
 
   const fields = document.getElementById('loginFields');
-  if(loginRole === 'personel'){
-    fields.innerHTML = `
-      <label>Personel</label>
-      <select id="loginPersonel">
-        ${State.personel.map(p=>`<option value="${p.id}">${p.name}</option>`).join('')}
-      </select>
-      <label>PIN</label>
-      <input type="password" id="loginPin" placeholder="••••" maxlength="8" autocomplete="new-password">
-    `;
-  } else {
-    fields.innerHTML = `
-      <label>Yönetici</label>
-      <select id="loginAdmin">
-        ${State.admins.map(a=>`<option value="${a.id}">${a.name}${a.permission==='readonly'?' (salt okunur)':''}</option>`).join('')}
-      </select>
-      <label>Şifre</label>
-      <input type="password" id="loginPin" placeholder="••••" maxlength="12" autocomplete="new-password">
-    `;
-  }
+  fields.innerHTML = `
+    <label>${loginRole==='personel' ? 'Personel' : 'Yönetici'}</label>
+    <div class="person-pick" id="personPick">
+      ${list.map(x=>`
+        <button type="button" class="person-pick-btn ${loginSelectedId===x.id?'on':''}" data-id="${x.id}">
+          ${x.name}${loginRole==='admin' && x.permission==='readonly' ? ' <span class="ans-time">(salt okunur)</span>' : ''}
+        </button>
+      `).join('')}
+    </div>
+    <label>${loginRole==='personel' ? 'PIN' : 'Şifre'}</label>
+    <input type="password" id="loginPin" placeholder="••••" maxlength="12" autocomplete="new-password">
+  `;
+  document.getElementById('personPick').querySelectorAll('.person-pick-btn').forEach(btn=>{
+    btn.onclick = ()=>{ loginSelectedId = btn.dataset.id; renderLogin(); document.getElementById('loginPin').focus(); };
+  });
+  document.getElementById('loginPin').addEventListener('keydown', (e)=>{
+    if(e.key === 'Enter'){ document.getElementById('loginBtn').click(); }
+  });
 
   document.getElementById('loginBtn').onclick = async ()=>{
     const err = document.getElementById('loginErr');
     const pin = document.getElementById('loginPin').value.trim();
     let sessionToSet = null;
     if(loginRole === 'personel'){
-      const sel = document.getElementById('loginPersonel');
-      const p = State.personel.find(x=>x.id===sel.value);
+      const p = State.personel.find(x=>x.id===loginSelectedId);
       if(!p){ err.textContent = 'Personel bulunamadı.'; return; }
       if(pin !== p.pin){ err.textContent = 'PIN hatalı.'; return; }
       sessionToSet = {role:'personel', personelId:p.id, name:p.name};
     } else {
-      const sel = document.getElementById('loginAdmin');
-      const a = State.admins.find(x=>x.id===sel.value);
+      const a = State.admins.find(x=>x.id===loginSelectedId);
       if(!a){ err.textContent = 'Yönetici bulunamadı.'; return; }
       if(pin !== a.pin){ err.textContent = 'Şifre hatalı.'; return; }
       sessionToSet = {role:'admin', adminId:a.id, adminName:a.name, permission:a.permission};
@@ -540,6 +582,7 @@ function renderLogin(){
       btn.disabled = false; btn.textContent = 'Giriş Yap';
     }
     State.session = sessionToSet;
+    saveSession(sessionToSet);
     render();
   };
 }
@@ -1829,6 +1872,11 @@ if('serviceWorker' in navigator){
     if(SCAN_ITEM_ID){
       renderScanConfirm();
     } else {
+      const restored = restoreSessionIfValid();
+      if(restored){
+        State.session = restored;
+        await loadActivityData();
+      }
       render();
     }
   }catch(err){
