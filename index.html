@@ -12,6 +12,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <style>
   :root{
     --bg: #f2f3f5;
@@ -83,7 +84,7 @@
   .person-pick-btn.on{border-color:var(--amber);background:rgba(185,106,18,.12);font-weight:700;}
 
   label{display:block;font-size:12px;color:var(--ink-dim);margin-bottom:6px;font-family:var(--mono);}
-  select, input[type=password], input[type=text], input[type=date], textarea{
+  select, input[type=password], input[type=text], input[type=date], input[type=email], input[type=number], textarea{
     width:100%;background:var(--panel-2);border:1px solid var(--line);color:var(--ink);
     padding:10px 12px;border-radius:8px;font-size:14px;font-family:var(--sans);margin-bottom:16px;
   }
@@ -125,6 +126,9 @@
   .badge{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:20px;font-size:11.5px;font-weight:700;font-family:var(--mono);}
   .badge.ok{background:rgba(35,135,90,.12);color:var(--green);}
   .badge.warn{background:rgba(200,56,43,.12);color:var(--red);}
+  .badge.soon{background:rgba(185,106,18,.14);color:var(--amber);}
+  .badge.over{background:rgba(200,56,43,.18);color:var(--red);font-weight:800;}
+  .badge.idle{background:rgba(102,112,133,.12);color:var(--ink-dim);}
 
   .item-row{display:flex;align-items:center;justify-content:space-between;gap:12px;
     padding:14px 0;border-bottom:1px solid var(--line);}
@@ -148,6 +152,21 @@
   }
   .form-list-item:hover{border-color:var(--amber);}
   .form-list-item .meta{font-size:12px;color:var(--ink-dim);font-family:var(--mono);margin-top:2px;}
+
+  .vcard{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px;margin-bottom:16px;}
+  .vcard-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:10px;}
+  .vcard-plate{font-family:var(--mono);font-size:18px;font-weight:700;letter-spacing:1px;}
+  .vcard-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-top:10px;}
+  .vcard-field{font-size:12px;color:var(--ink-dim);}
+  .vcard-field b{display:block;color:var(--ink);font-size:13px;font-weight:600;margin-bottom:4px;}
+  .overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px;overflow-y:auto;}
+  .overlay .card{max-width:520px;width:100%;margin:20px 0;}
+  .module-tabs{display:flex;gap:8px;margin-bottom:18px;}
+  .module-tabs button{
+    flex:1;padding:10px;border-radius:8px;border:1px solid var(--line);background:var(--panel-2);
+    color:var(--ink-dim);cursor:pointer;font-family:var(--mono);font-size:12.5px;letter-spacing:.4px;
+  }
+  .module-tabs button.active{background:var(--amber);color:#fff8ee;border-color:var(--amber);font-weight:700;}
 
   .builder-row{display:flex;gap:8px;align-items:center;margin-bottom:8px;}
   .builder-row input[type=text]{margin:0;flex:1;}
@@ -199,7 +218,7 @@
 <body>
 
 <div class="topbar">
-  <div class="brand">▮▮▮ <b>NİZAMİYE</b> KONTROL PANELİ</div>
+  <div class="brand">▮▮▮ <b>NKP</b> NİZAMİYE &amp; ARAÇ TAKİP</div>
   <div class="who" style="display:flex;">
     <button id="shareBtn" title="Paylaş">🔗 Paylaş</button>
     <span id="whoLabel"></span>
@@ -228,9 +247,17 @@ const firebaseConfig = {
 };
 /* ▲▲▲ */
 
+/* ▼▼▼ EmailJS ayarları (Araç Takip modülünün mail bildirimleri için) —
+   emailjs.com hesabınızdan alınır, bkz. PROJE_DOKUMANI.md ▼▼▼ */
+const EMAILJS_PUBLIC_KEY = "2uGAFJRrUEhHo3YJG";
+const EMAILJS_SERVICE_ID = "service_ju18dvw";
+const EMAILJS_TEMPLATE_ID = "template_af9vxu6";
+/* ▲▲▲ */
+
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
 const auth = firebase.auth();
+try{ emailjs.init({publicKey: EMAILJS_PUBLIC_KEY}); }catch(e){ console.error('EmailJS init hatası', e); }
 
 /* Anonim oturum: kullanıcıya hiçbir giriş ekranı göstermez, arka planda sessizce
    çalışır. Firestore kuralları artık "allow if request.auth != null" olduğu için
@@ -291,6 +318,26 @@ async function deleteSubmissionsBeforeRemote(cutoff){
   }catch(e){ console.error('silme hatası', e); return {ok:false, deleted:0}; }
 }
 
+/* ---- araç bildirim (mail) geçmişi ---- */
+async function getMailLogRemote(){
+  try{
+    const snap = await db.collection('at-mail-log').get();
+    return snap.docs.map(d=>d.data());
+  }catch(e){ console.error('getMailLog hatası', e); return []; }
+}
+async function addMailLogRemote(entry){
+  try{ await db.collection('at-mail-log').doc(entry.id).set(entry); return true; }
+  catch(e){ console.error('addMailLog hatası', e); return false; }
+}
+async function deleteMailLogsBeforeRemote(cutoffIso){
+  try{
+    let deleted = 0;
+    const snap = await db.collection('at-mail-log').where('olusturulma', '<', cutoffIso).get();
+    for(const d of snap.docs){ await d.ref.delete(); deleted++; }
+    return {ok:true, deleted};
+  }catch(e){ console.error('mail log silme hatası', e); return {ok:false, deleted:0}; }
+}
+
 /* ---- QR kontrol noktası taramaları ---- */
 async function getScansRemote(){
   try{
@@ -314,9 +361,60 @@ function todayStr(){
   return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 }
 function trDate(iso){
+  if(!iso) return '—';
   const [y,m,d] = iso.split('-');
   return `${d}.${m}.${y}`;
 }
+
+/* ============================================================
+   ARAÇ TAKİP MODÜLÜ — sabitler, tarih yardımcıları, seed veri
+   Nizamiye modülüyle AYNI personel/yönetici listelerini kullanır;
+   ayrı bir kullanıcı sistemi YOKTUR (tek paket, tek giriş).
+   ============================================================ */
+function todayISOCalendar(){
+  const d = new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+function daysUntil(iso){
+  if(!iso) return null;
+  const today = new Date(); today.setHours(0,0,0,0);
+  const target = new Date(iso+'T00:00:00');
+  return Math.round((target - today) / 86400000);
+}
+function remainingBadgeHtml(iso){
+  if(!iso) return `<span class="badge idle">— tanımsız</span>`;
+  const days = daysUntil(iso);
+  let cls, lamp, label;
+  if(days < 0){ cls='over'; lamp='warn'; label = `${trDate(iso)} · ${Math.abs(days)} gün gecikti`; }
+  else if(days <= 7){ cls='warn'; lamp='warn'; label = `${trDate(iso)} · ${days} gün kaldı`; }
+  else if(days <= 30){ cls='soon'; lamp='soon'; label = `${trDate(iso)} · ${days} gün kaldı`; }
+  else { cls='ok'; lamp='ok'; label = `${trDate(iso)} · ${days} gün kaldı`; }
+  return `<span class="badge ${cls}"><span class="lamp ${lamp}"></span> ${label}</span>`;
+}
+const DURUM_SECENEKLERI = ['Aktif','Bakımda','Arızalı','Trafikte Değil'];
+const ALERT_DURUMLAR = new Set(['Arızalı','Bakımda']); // bu durumlara geçince anında mail gider
+function durumBadgeClass(durum){
+  if(durum==='Aktif') return 'ok';
+  if(durum==='Arızalı') return 'warn';
+  if(durum==='Bakımda') return 'soon';
+  return 'idle';
+}
+const DATE_FIELDS = [
+  {key:'sonrakiBakim', label:'Sonraki Bakım'},
+  {key:'muayeneBitis', label:'Muayene Bitiş'},
+  {key:'sigortaBitis', label:'Sigorta Bitiş'},
+  {key:'kaskoBitis', label:'Kasko Bitiş'},
+];
+function seedAraclar(){
+  return [{
+    id: uid('v'), plaka:'06 ABC 123', markaModel:'Ford Transit', sorumluId:null,
+    durum:'Aktif', km:0, sonBakim:null, sonrakiBakim:null,
+    muayeneBitis:null, sigortaBitis:null, kaskoBitis:null,
+    not:'Bu örnek bir kayıttır — düzenleyebilir veya silebilirsiniz.',
+    aktif:true, olusturulma:new Date().toISOString(),
+  }];
+}
+const SEED_ARAC_AYARLAR = { esikGunler:[30,15,7,1], mailBildirimAktif:true };
 
 /* ============================================================
    CEVAP ŞEKLİ: her madde {v: değer, t: işaretlenme zamanı(ISO)} olarak saklanır.
@@ -341,9 +439,9 @@ function formatTime(iso){
    SEED DATA  (mirrors the original "Gece Güvenlik Kontrol Formu")
    ============================================================ */
 const SEED_PERSONEL = [
-  {id:'p1', name:'Ahmet YILMAZ', pin:'1111'},
-  {id:'p2', name:'Mehmet KAYA', pin:'2222'},
-  {id:'p3', name:'Ali DEMİR', pin:'3333'},
+  {id:'p1', name:'Ahmet YILMAZ', pin:'1111', email:''},
+  {id:'p2', name:'Mehmet KAYA', pin:'2222', email:''},
+  {id:'p3', name:'Ali DEMİR', pin:'3333', email:''},
 ];
 
 function seedGuvenlikFormu(){
@@ -377,11 +475,16 @@ function seedGuvenlikFormu(){
 const State = {
   personel: [],
   forms: [],
-  admins: [],   // [{id, name, pin, permission:'full'|'readonly'}]
+  admins: [],   // [{id, name, pin, permission:'full'|'readonly', email}]
   submissions: [],
   scans: [],
   activityLoaded: false, // submissions/scans henüz çekilmedi mi?
   session: null,   // {role:'personel', personelId, name} | {role:'admin', adminId, adminName, permission}
+  // --- Araç Takip modülü ---
+  araclar: [],
+  aracAyarlar: SEED_ARAC_AYARLAR,
+  mailLog: [],
+  notifChecked: false,
 };
 
 function isFullAdmin(){
@@ -392,28 +495,36 @@ function isFullAdmin(){
    artarsa artsın bu her zaman hızlı kalır — büyük koleksiyonları okumaz. */
 async function loadCore(){
   try{
-    let [personel, forms, admins, legacyPin] = await Promise.all([
+    let [personel, forms, admins, legacyPin, araclar, aracAyarlar] = await Promise.all([
       kvGet('guv-personel', null),
       kvGet('guv-formlar', null),
       kvGet('guv-yoneticiler', null),
       kvGet('guv-admin-pin', null),
+      kvGet('at-araclar', null),
+      kvGet('at-ayarlar', null),
     ]);
     if(personel === null){ personel = SEED_PERSONEL; await kvSet('guv-personel', personel); }
     if(forms === null){ forms = [seedGuvenlikFormu()]; await kvSet('guv-formlar', forms); }
     if(admins === null){
       // Eski tek-şifreli sistemden geçiş: varsa o şifreyi ilk "tam yetkili" yönetici yap
-      admins = [{id:uid('a'), name:'Yönetici', pin: legacyPin || '1234', permission:'full'}];
+      admins = [{id:uid('a'), name:'Yönetici', pin: legacyPin || '1234', permission:'full', email:''}];
       await kvSet('guv-yoneticiler', admins);
     }
+    if(araclar === null){ araclar = seedAraclar(); await kvSet('at-araclar', araclar); }
+    if(aracAyarlar === null){ aracAyarlar = SEED_ARAC_AYARLAR; await kvSet('at-ayarlar', aracAyarlar); }
     State.personel = personel;
     State.forms = forms;
     State.admins = admins;
+    State.araclar = araclar;
+    State.aracAyarlar = aracAyarlar;
     return true;
   }catch(e){
     console.error('loadCore hatası', e);
     State.personel = SEED_PERSONEL;
     State.forms = [seedGuvenlikFormu()];
-    State.admins = [{id:uid('a'), name:'Yönetici', pin:'1234', permission:'full'}];
+    State.admins = [{id:uid('a'), name:'Yönetici', pin:'1234', permission:'full', email:''}];
+    State.araclar = seedAraclar();
+    State.aracAyarlar = SEED_ARAC_AYARLAR;
     return false;
   }
 }
@@ -421,10 +532,117 @@ async function loadCore(){
 /* Ancak giriş yapıldıktan SONRA çağrılır: geçmiş formlar + QR taramaları.
    Bunlar zamanla büyüyen veriler, o yüzden giriş ekranını bekletmesinler diye ayrıldı. */
 async function loadActivityData(){
-  const [subs, scans] = await Promise.all([getSubmissionsRemote(), getScansRemote()]);
+  const [subs, scans, mailLog] = await Promise.all([getSubmissionsRemote(), getScansRemote(), getMailLogRemote()]);
   State.submissions = subs;
   State.scans = scans;
+  State.mailLog = mailLog;
   State.activityLoaded = true;
+}
+
+/* ============================================================
+   ARAÇ TAKİP — MAIL GÖNDERİM MOTORU (EmailJS)
+   ÖNEMLİ SINIRLAMA: Statik site + Firestore olduğu için gerçek bir sunucu/
+   zamanlayıcı yoktur. Bildirimler yalnızca biri (personel ya da yönetici)
+   panele giriş yaptığında kontrol edilip gönderilir. Panel günlerce
+   açılmazsa, tekrar açıldığında birikmiş bildirimler tek seferde gider.
+   Gerçek zamanlı otomasyon için Firebase Cloud Functions + zamanlanmış
+   görev gerekir (bkz. PROJE_DOKUMANI.md).
+   ============================================================ */
+async function sendEmailJs(toEmail, toName, params){
+  if(!toEmail) return false;
+  try{
+    await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
+      to_email: toEmail, to_name: toName || '', ...params
+    });
+    return true;
+  }catch(e){ console.error('EmailJS gönderim hatası', e); return false; }
+}
+function collectVehicleRecipients(vehicle){
+  const list = [];
+  const sorumlu = State.personel.find(p=>p.id===vehicle.sorumluId);
+  if(sorumlu && sorumlu.email) list.push({email:sorumlu.email, name:sorumlu.name});
+  State.admins.forEach(a=>{ if(a.email) list.push({email:a.email, name:a.name}); });
+  const seen = new Set();
+  return list.filter(r=>{ if(seen.has(r.email)) return false; seen.add(r.email); return true; });
+}
+async function sendVehicleMail(vehicle, {tur, alan, esik, konu, detay}){
+  const recipients = collectVehicleRecipients(vehicle);
+  const logBase = {
+    id: uid('m'), aracId: vehicle.id, plaka: vehicle.plaka, tur,
+    alan: alan || null, esik: (esik === undefined ? null : esik),
+    konu, olusturulma: new Date().toISOString(),
+  };
+  if(recipients.length === 0){
+    const entry = {...logBase, aliciListesi:[], basarili:false, hata:'Alıcı e-postası tanımlı değil (Personel/Yöneticiler sekmesinden e-posta girin).'};
+    await addMailLogRemote(entry);
+    State.mailLog.push(entry);
+    return false;
+  }
+  let allOk = true;
+  for(const r of recipients){
+    const ok = await sendEmailJs(r.email, r.name, {
+      subject: konu, plaka: vehicle.plaka, marka_model: vehicle.markaModel || '',
+      detay, tarih: trDate(todayISOCalendar()), panel_link: SITE_URL,
+    });
+    if(!ok) allOk = false;
+    await new Promise(res=>setTimeout(res, 350));
+  }
+  const finalLog = {...logBase, aliciListesi: recipients.map(r=>r.email), basarili: allOk};
+  await addMailLogRemote(finalLog);
+  State.mailLog.push(finalLog);
+  return allOk;
+}
+async function checkExpiryNotifications(){
+  if(!State.aracAyarlar.mailBildirimAktif) return;
+  if(State.notifChecked) return;
+  State.notifChecked = true;
+  const esikler = [...(State.aracAyarlar.esikGunler||[30,15,7,1])].sort((a,b)=>a-b);
+  for(const v of State.araclar){
+    if(!v.aktif) continue;
+    for(const alan of DATE_FIELDS){
+      const iso = v[alan.key];
+      if(!iso) continue;
+      const kalan = daysUntil(iso);
+      for(const esik of esikler){
+        if(kalan <= esik){
+          const already = State.mailLog.some(m=>m.aracId===v.id && m.alan===alan.key && m.esik===esik);
+          if(!already){
+            const konu = `${v.plaka} — ${alan.label} ${kalan<0?'süresi geçti':'yaklaşıyor'}`;
+            const detay = kalan<0
+              ? `${alan.label} tarihi ${Math.abs(kalan)} gün önce geçti (${trDate(iso)}).`
+              : `${alan.label} tarihine ${kalan} gün kaldı (${trDate(iso)}).`;
+            await sendVehicleMail(v, {tur:'sure', alan:alan.key, esik, konu, detay});
+          }
+        }
+      }
+    }
+  }
+}
+async function maybeSendDurumMail(oldVehicle, newVehicle){
+  if(!State.aracAyarlar.mailBildirimAktif) return;
+  if(!ALERT_DURUMLAR.has(newVehicle.durum)) return;
+  if(oldVehicle && oldVehicle.durum === newVehicle.durum) return;
+  const konu = `${newVehicle.plaka} — Durum değişti: ${newVehicle.durum}`;
+  const detay = `${newVehicle.plaka} (${newVehicle.markaModel||'—'}) aracının durumu "${oldVehicle ? oldVehicle.durum : '—'}" iken "${newVehicle.durum}" olarak güncellendi.`;
+  await sendVehicleMail(newVehicle, {tur:'durum', alan:null, esik:null, konu, detay});
+}
+async function manualSendReminderMail(vehicle){
+  const parts = DATE_FIELDS.map(a=>{
+    const iso = vehicle[a.key]; if(!iso) return null;
+    const kalan = daysUntil(iso);
+    return `${a.label}: ${trDate(iso)} (${kalan<0 ? Math.abs(kalan)+' gün gecikti' : kalan+' gün kaldı'})`;
+  }).filter(Boolean).join(' · ');
+  const konu = `${vehicle.plaka} — Araç Bilgilendirme (elle gönderildi)`;
+  return sendVehicleMail(vehicle, {tur:'manuel', alan:null, esik:null, konu, detay: parts || 'Tanımlı tarih yok.'});
+}
+async function sendTestMail(toEmail){
+  try{
+    await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
+      to_email: toEmail, to_name:'Test', subject:'ATP Test Maili', plaka:'—', marka_model:'—',
+      detay:'Bu bir test mailidir. EmailJS bağlantınız çalışıyor.', tarih:trDate(todayISOCalendar()), panel_link:SITE_URL
+    });
+    return true;
+  }catch(e){ console.error('Test mail hatası', e); return false; }
 }
 
 /* Belirli bir kontrol noktası (itemId) için bugüne ait EN SON taramayı bulur */
@@ -605,6 +823,7 @@ function renderLogin(){
     State.session = sessionToSet;
     saveSession(sessionToSet);
     render();
+    checkExpiryNotifications();
   };
 }
 
@@ -612,6 +831,7 @@ function renderLogin(){
    PERSONEL PANEL
    ============================================================ */
 let personelOpenFormId = null;
+let personelTab = 'formlar';
 
 function findSubmission(formId, personelId, tarih){
   return State.submissions.find(s => s.formId===formId && s.personelId===personelId && s.tarih===tarih);
@@ -622,10 +842,25 @@ function renderPersonelPanel(){
     renderFillForm(personelOpenFormId);
     return;
   }
+  app.innerHTML = `
+    <div class="module-tabs">
+      <button id="pTabForm" class="${personelTab==='formlar'?'active':''}">📋 FORMLAR</button>
+      <button id="pTabArac" class="${personelTab==='araclarim'?'active':''}">🚗 ARAÇLARIM</button>
+    </div>
+    <div id="personelBody"></div>
+  `;
+  document.getElementById('pTabForm').onclick = ()=>{ personelTab='formlar'; renderPersonelPanel(); };
+  document.getElementById('pTabArac').onclick = ()=>{ personelTab='araclarim'; renderPersonelPanel(); };
+  if(personelTab === 'araclarim'){ renderPersonelAraclarim(); return; }
+  renderPersonelFormlar();
+}
+
+function renderPersonelFormlar(){
   const activeForms = State.forms.filter(f=>f.active);
   const tarih = todayStr();
 
-  app.innerHTML = `
+  const body = document.getElementById('personelBody');
+  body.innerHTML = `
     <div class="card">
       <h2>Bugünün Formları — ${trDate(tarih)}</h2>
       <p class="hint">Doldurmak istediğiniz formu seçin. Daha önce gönderdiyseniz, açıp güncelleyebilirsiniz.</p>
@@ -654,6 +889,37 @@ function renderPersonelPanel(){
   listEl.querySelectorAll('.form-list-item').forEach(el=>{
     el.onclick = ()=>{ personelOpenFormId = el.dataset.id; render(); };
   });
+}
+
+/* ---------- Araçlarım (görüntüleme amaçlı) ---------- */
+function renderPersonelAraclarim(){
+  const mine = State.araclar.filter(v=>v.sorumluId===State.session.personelId && v.aktif);
+  const body = document.getElementById('personelBody');
+  body.innerHTML = `
+    <div class="card">
+      <h2>Araçlarım</h2>
+      <p class="hint">Size atanmış araçların güncel durumu ve süre bilgileri. Bu ekran görüntüleme amaçlıdır.</p>
+      <div id="mineWrap"></div>
+    </div>
+  `;
+  const wrap = document.getElementById('mineWrap');
+  if(mine.length === 0){
+    wrap.innerHTML = `<div class="empty">Size atanmış aktif araç bulunmuyor.</div>`;
+    return;
+  }
+  wrap.innerHTML = mine.map(v=>`
+    <div class="vcard">
+      <div class="vcard-top">
+        <div class="vcard-plate">${v.plaka}</div>
+        <span class="badge ${durumBadgeClass(v.durum)}"><span class="lamp ${durumBadgeClass(v.durum)==='warn'?'warn':(durumBadgeClass(v.durum)==='soon'?'soon':'ok')}"></span> ${v.durum}</span>
+      </div>
+      <div style="font-size:13px;color:var(--ink-dim);">${v.markaModel||'—'} · ${(v.km||0).toLocaleString('tr-TR')} km</div>
+      <div class="vcard-fields">
+        ${DATE_FIELDS.map(a=>`<div class="vcard-field"><b>${a.label}</b>${remainingBadgeHtml(v[a.key])}</div>`).join('')}
+      </div>
+      ${v.not ? `<div style="margin-top:10px;font-size:13px;color:var(--ink-dim);"><b style="color:var(--ink);">Not:</b> ${v.not}</div>` : ''}
+    </div>
+  `).join('');
 }
 
 function renderFillForm(formId){
@@ -839,6 +1105,8 @@ function renderAdminPanel(){
       <button data-t="gonderimler" class="${adminTab==='gonderimler'?'active':''}">GÖNDERİMLER</button>
       <button data-t="qrturlari" class="${adminTab==='qrturlari'?'active':''}">QR TURLARI</button>
       <button data-t="formlar" class="${adminTab==='formlar'?'active':''}">FORMLAR</button>
+      <button data-t="araclar" class="${adminTab==='araclar'?'active':''}">🚗 ARAÇLAR</button>
+      <button data-t="bildirimler" class="${adminTab==='bildirimler'?'active':''}">BİLDİRİM GEÇMİŞİ</button>
       <button data-t="personel" class="${adminTab==='personel'?'active':''}">PERSONEL</button>
       <button data-t="yoneticiler" class="${adminTab==='yoneticiler'?'active':''}">YÖNETİCİLER</button>
       <button data-t="ayarlar" class="${adminTab==='ayarlar'?'active':''}">AYARLAR</button>
@@ -851,6 +1119,8 @@ function renderAdminPanel(){
   if(adminTab === 'gonderimler') renderGonderimlerTab();
   else if(adminTab === 'qrturlari') renderQrTurlariTab();
   else if(adminTab === 'formlar') renderFormlarTab();
+  else if(adminTab === 'araclar') renderAraclarTab();
+  else if(adminTab === 'bildirimler') renderBildirimlerTab();
   else if(adminTab === 'personel') renderPersonelTab();
   else if(adminTab === 'yoneticiler') renderYoneticilerTab();
   else renderAyarlarTab();
@@ -1202,6 +1472,275 @@ function renderSubmissionDetail(sub){
   `;
 }
 
+/* ---------- ARAÇLAR TAB (Araç Takip modülü) ---------- */
+let aFilterDurum = '', aFilterSorumlu = '', aFilterArama = '', aShowPasif = false;
+
+function renderAraclarTab(){
+  const canEdit = isFullAdmin();
+  const body = document.getElementById('adminBody');
+  body.innerHTML = `
+    <div class="card">
+      <div class="flex-between">
+        <h2 style="margin:0;">Araç Filosu</h2>
+        <div style="display:flex;gap:8px;">
+          ${canEdit ? `<button class="btn small" id="newVBtn">+ Araç Ekle</button>` : ''}
+          <button class="btn ghost small" id="printVBtn">🖨 Listeyi Yazdır</button>
+          <button class="btn ghost small" id="refreshVBtn">🔄 Yenile</button>
+        </div>
+      </div>
+      <div class="filters" style="margin-bottom:14px;">
+        <div><label>Ara (Plaka/Marka)</label><input type="text" id="fArama" value="${aFilterArama}" placeholder="Örn: 06 ABC"></div>
+        <div><label>Durum</label>
+          <select id="fDurum"><option value="">Tümü</option>${DURUM_SECENEKLERI.map(d=>`<option value="${d}" ${aFilterDurum===d?'selected':''}>${d}</option>`).join('')}</select>
+        </div>
+        <div><label>Sorumlu</label>
+          <select id="fSorumlu"><option value="">Tümü</option>${State.personel.map(p=>`<option value="${p.id}" ${aFilterSorumlu===p.id?'selected':''}>${p.name}</option>`).join('')}</select>
+        </div>
+      </div>
+      <label style="display:flex;align-items:center;font-family:var(--sans);font-size:13px;color:var(--ink-dim);margin-bottom:14px;">
+        <input type="checkbox" id="fPasif" ${aShowPasif?'checked':''}> Pasif (arşivlenmiş) araçları da göster
+      </label>
+      <div id="vTableWrap"></div>
+    </div>
+  `;
+  document.getElementById('fArama').oninput = e=>{ aFilterArama = e.target.value; renderAraclarTab(); };
+  document.getElementById('fDurum').onchange = e=>{ aFilterDurum = e.target.value; renderAraclarTab(); };
+  document.getElementById('fSorumlu').onchange = e=>{ aFilterSorumlu = e.target.value; renderAraclarTab(); };
+  document.getElementById('fPasif').onchange = e=>{ aShowPasif = e.target.checked; renderAraclarTab(); };
+  document.getElementById('refreshVBtn').onclick = async ()=>{
+    const btn = document.getElementById('refreshVBtn');
+    btn.disabled = true; btn.textContent = 'Yenileniyor…';
+    State.araclar = await kvGet('at-araclar', State.araclar);
+    State.mailLog = await getMailLogRemote();
+    renderAraclarTab();
+  };
+  if(canEdit) document.getElementById('newVBtn').onclick = ()=> showVehicleEditor(null);
+
+  let list = [...State.araclar];
+  if(!aShowPasif) list = list.filter(v=>v.aktif);
+  if(aFilterDurum) list = list.filter(v=>v.durum===aFilterDurum);
+  if(aFilterSorumlu) list = list.filter(v=>v.sorumluId===aFilterSorumlu);
+  if(aFilterArama.trim()){
+    const q = aFilterArama.trim().toLocaleLowerCase('tr');
+    list = list.filter(v => (v.plaka||'').toLocaleLowerCase('tr').includes(q) || (v.markaModel||'').toLocaleLowerCase('tr').includes(q));
+  }
+  list.sort((a,b)=> (a.plaka||'').localeCompare(b.plaka||'', 'tr'));
+
+  document.getElementById('printVBtn').onclick = ()=>{
+    if(list.length===0){ toast('Yazdırılacak kayıt yok.'); return; }
+    const rows = list.map(v=>{
+      const sorumlu = State.personel.find(p=>p.id===v.sorumluId);
+      return `<div class="row"><span><b>${v.plaka}</b> — ${v.markaModel||'—'} · Sorumlu: ${sorumlu?sorumlu.name:'Atanmadı'} · Durum: ${v.durum}</span>
+        <span>Bakım: ${trDate(v.sonrakiBakim)} · Muayene: ${trDate(v.muayeneBitis)} · Sigorta: ${trDate(v.sigortaBitis)} · Kasko: ${trDate(v.kaskoBitis)}</span></div>`;
+    }).join('');
+    printHtmlDocument('Araç Filosu', `<h1>Araç Filosu — ${trDate(todayISOCalendar())}</h1>${rows}`);
+  };
+
+  const wrap = document.getElementById('vTableWrap');
+  if(list.length===0){ wrap.innerHTML = `<div class="empty">Kayıt bulunamadı.</div>`; return; }
+
+  wrap.innerHTML = `
+    <div class="table-scroll">
+    <table>
+      <thead><tr>
+        <th>Plaka</th><th>Marka/Model</th><th>Sorumlu</th><th>Durum</th><th>KM</th>
+        <th>Sonraki Bakım</th><th>Muayene</th><th>Sigorta</th><th>Kasko</th><th></th>
+      </tr></thead>
+      <tbody>
+        ${list.map(v=>{
+          const sorumlu = State.personel.find(p=>p.id===v.sorumluId);
+          return `
+          <tr ${!v.aktif?'style="opacity:.55;"':''}>
+            <td style="font-family:var(--mono);font-weight:700;">${v.plaka}${!v.aktif?' <span class="badge idle">PASİF</span>':''}</td>
+            <td>${v.markaModel||'—'}</td>
+            <td>${sorumlu ? sorumlu.name : '<span style="color:var(--ink-dim);">Atanmadı</span>'}</td>
+            <td><span class="badge ${durumBadgeClass(v.durum)}">${v.durum}</span></td>
+            <td>${(v.km||0).toLocaleString('tr-TR')}</td>
+            <td>${remainingBadgeHtml(v.sonrakiBakim)}</td>
+            <td>${remainingBadgeHtml(v.muayeneBitis)}</td>
+            <td>${remainingBadgeHtml(v.sigortaBitis)}</td>
+            <td>${remainingBadgeHtml(v.kaskoBitis)}</td>
+            <td style="white-space:nowrap;">
+              <button class="btn ghost small" data-mail="${v.id}">✉ Mail</button>
+              <button class="btn ghost small" data-edit="${v.id}">${canEdit?'Düzenle':'Görüntüle'}</button>
+              ${canEdit ? `<button class="btn danger small" data-del="${v.id}">Sil</button>` : ''}
+            </td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+    </div>
+  `;
+  wrap.querySelectorAll('button[data-edit]').forEach(b=>{
+    b.onclick = ()=> showVehicleEditor(State.araclar.find(v=>v.id===b.dataset.edit));
+  });
+  wrap.querySelectorAll('button[data-mail]').forEach(b=>{
+    b.onclick = async ()=>{
+      const v = State.araclar.find(x=>x.id===b.dataset.mail);
+      b.disabled = true; b.textContent = 'Gönderiliyor…';
+      const ok = await manualSendReminderMail(v);
+      b.disabled = false; b.textContent = '✉ Mail';
+      toast(ok ? `✓ ${v.plaka} için bilgilendirme maili gönderildi.` : `⚠ Mail gönderilemedi — alıcı e-postası veya EmailJS ayarlarını kontrol edin.`);
+    };
+  });
+  if(canEdit){
+    wrap.querySelectorAll('button[data-del]').forEach(b=>{
+      b.onclick = async ()=>{
+        const v = State.araclar.find(x=>x.id===b.dataset.del);
+        if(confirm(`${v.plaka} kalıcı olarak silinsin mi? (Bildirim geçmişi kayıtlı kalır.)`)){
+          State.araclar = State.araclar.filter(x=>x.id!==v.id);
+          await kvSet('at-araclar', State.araclar);
+          renderAraclarTab();
+        }
+      };
+    });
+  }
+}
+
+function showVehicleEditor(vehicle){
+  const canEdit = isFullAdmin();
+  const isNew = !vehicle;
+  const v = vehicle ? {...vehicle} : {
+    id:null, plaka:'', markaModel:'', sorumluId:'', durum:'Aktif', km:0,
+    sonBakim:'', sonrakiBakim:'', muayeneBitis:'', sigortaBitis:'', kaskoBitis:'', not:'', aktif:true,
+  };
+  const dis = canEdit ? '' : 'disabled';
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay';
+  overlay.innerHTML = `
+    <div class="card">
+      <h2>${isNew ? 'Araç Ekle' : (canEdit?'Aracı Düzenle':'Araç Bilgisi')}</h2>
+      <label>Plaka</label>
+      <input type="text" id="vPlaka" value="${v.plaka}" placeholder="Örn: 06 ABC 123" ${dis}>
+      <label>Marka / Model</label>
+      <input type="text" id="vMarka" value="${v.markaModel}" placeholder="Örn: Ford Transit" ${dis}>
+      <label>Sorumlu (Personel listesinden)</label>
+      <select id="vSorumlu" ${dis}>
+        <option value="">Atanmadı</option>
+        ${State.personel.map(p=>`<option value="${p.id}" ${v.sorumluId===p.id?'selected':''}>${p.name}</option>`).join('')}
+      </select>
+      <p class="hint" style="margin:-10px 0 14px;">Listede yoksa önce Personel sekmesinden ekleyin (nizamiye görevlisi olması şart değil, sadece şoför olarak da eklenebilir).</p>
+      <label>Durum</label>
+      <select id="vDurum" ${dis}>${DURUM_SECENEKLERI.map(d=>`<option value="${d}" ${v.durum===d?'selected':''}>${d}</option>`).join('')}</select>
+      <label>KM</label>
+      <input type="number" id="vKm" value="${v.km||0}" min="0" ${dis}>
+      <div style="display:flex;gap:12px;">
+        <div style="flex:1;"><label>Son Bakım</label><input type="date" id="vSonBakim" value="${v.sonBakim||''}" ${dis}></div>
+        <div style="flex:1;"><label>Sonraki Bakım</label><input type="date" id="vSonrakiBakim" value="${v.sonrakiBakim||''}" ${dis}></div>
+      </div>
+      <div style="display:flex;gap:12px;">
+        <div style="flex:1;"><label>Muayene Bitiş</label><input type="date" id="vMuayene" value="${v.muayeneBitis||''}" ${dis}></div>
+        <div style="flex:1;"><label>Sigorta Bitiş</label><input type="date" id="vSigorta" value="${v.sigortaBitis||''}" ${dis}></div>
+      </div>
+      <label>Kasko Bitiş</label>
+      <input type="date" id="vKasko" value="${v.kaskoBitis||''}" ${dis}>
+      <label>Not</label>
+      <textarea id="vNot" rows="3" ${dis}>${v.not||''}</textarea>
+      ${canEdit ? `<label style="display:flex;align-items:center;font-family:var(--sans);"><input type="checkbox" id="vAktif" ${v.aktif?'checked':''}> Aktif (işaret kaldırılırsa araç arşivlenir, bildirim gönderilmez)</label>` : ''}
+      <div style="display:flex;gap:10px;margin-top:10px;">
+        ${canEdit ? `<button class="btn" id="vSaveBtn">Kaydet</button>` : ''}
+        <button class="btn ghost" id="vCloseBtn">${canEdit?'Vazgeç':'Kapat'}</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById('vCloseBtn').onclick = ()=> overlay.remove();
+  if(!canEdit) return;
+  document.getElementById('vSaveBtn').onclick = async ()=>{
+    const plaka = document.getElementById('vPlaka').value.trim();
+    if(!plaka){ toast('Plaka gerekli.'); return; }
+    const newVehicle = {
+      id: v.id || uid('v'),
+      plaka, markaModel: document.getElementById('vMarka').value.trim(),
+      sorumluId: document.getElementById('vSorumlu').value || null,
+      durum: document.getElementById('vDurum').value,
+      km: +document.getElementById('vKm').value || 0,
+      sonBakim: document.getElementById('vSonBakim').value || null,
+      sonrakiBakim: document.getElementById('vSonrakiBakim').value || null,
+      muayeneBitis: document.getElementById('vMuayene').value || null,
+      sigortaBitis: document.getElementById('vSigorta').value || null,
+      kaskoBitis: document.getElementById('vKasko').value || null,
+      not: document.getElementById('vNot').value.trim(),
+      aktif: document.getElementById('vAktif').checked,
+      olusturulma: v.olusturulma || new Date().toISOString(),
+      guncelleme: new Date().toISOString(),
+    };
+    const saveBtn = document.getElementById('vSaveBtn');
+    saveBtn.disabled = true; saveBtn.textContent = 'Kaydediliyor…';
+    if(isNew){ State.araclar.push(newVehicle); }
+    else { State.araclar = State.araclar.map(x=> x.id===newVehicle.id ? newVehicle : x); }
+    await kvSet('at-araclar', State.araclar);
+    if(!isNew) await maybeSendDurumMail(vehicle, newVehicle);
+    overlay.remove();
+    toast('Araç kaydedildi.');
+    renderAraclarTab();
+  };
+}
+
+/* ---------- BİLDİRİM GEÇMİŞİ TAB (Araç Takip mail kayıtları) ---------- */
+let bFilterPlaka = '', bFilterTur = '';
+const TUR_ETIKET = {sure:'Süre Bildirimi', durum:'Durum Değişikliği', manuel:'Elle Gönderildi', test:'Test'};
+
+function renderBildirimlerTab(){
+  const body = document.getElementById('adminBody');
+  body.innerHTML = `
+    <div class="card">
+      <div class="flex-between">
+        <h2 style="margin:0;">Araç Bildirim Geçmişi</h2>
+        <button class="btn ghost small" id="refreshMailBtn">🔄 Yenile</button>
+      </div>
+      <p class="hint">Gönderilen tüm araç bilgilendirme maillerinin kaydı. Bu, gerçekten gitmiş bir e-postanın kanıtı değil — EmailJS'e iletim denemesinin sonucudur.</p>
+      <div class="filters" style="margin-bottom:14px;">
+        <div><label>Plaka</label><input type="text" id="bPlaka" value="${bFilterPlaka}" placeholder="Örn: 06 ABC"></div>
+        <div><label>Tür</label>
+          <select id="bTur">
+            <option value="">Tümü</option>
+            <option value="sure" ${bFilterTur==='sure'?'selected':''}>Süre Bildirimi</option>
+            <option value="durum" ${bFilterTur==='durum'?'selected':''}>Durum Değişikliği</option>
+            <option value="manuel" ${bFilterTur==='manuel'?'selected':''}>Elle Gönderildi</option>
+            <option value="test" ${bFilterTur==='test'?'selected':''}>Test</option>
+          </select>
+        </div>
+      </div>
+      <div id="mailTableWrap"></div>
+    </div>
+  `;
+  document.getElementById('bPlaka').oninput = e=>{ bFilterPlaka = e.target.value; renderBildirimlerTab(); };
+  document.getElementById('bTur').onchange = e=>{ bFilterTur = e.target.value; renderBildirimlerTab(); };
+  document.getElementById('refreshMailBtn').onclick = async ()=>{
+    const btn = document.getElementById('refreshMailBtn');
+    btn.disabled = true; btn.textContent = 'Yenileniyor…';
+    State.mailLog = await getMailLogRemote();
+    renderBildirimlerTab();
+  };
+
+  let list = [...State.mailLog].sort((a,b)=> (b.olusturulma||'').localeCompare(a.olusturulma||''));
+  if(bFilterPlaka.trim()) list = list.filter(m=> (m.plaka||'').toLocaleLowerCase('tr').includes(bFilterPlaka.trim().toLocaleLowerCase('tr')));
+  if(bFilterTur) list = list.filter(m=>m.tur===bFilterTur);
+
+  const wrap = document.getElementById('mailTableWrap');
+  if(list.length===0){ wrap.innerHTML = `<div class="empty">Kayıt bulunamadı.</div>`; return; }
+  wrap.innerHTML = `
+    <div class="table-scroll">
+    <table>
+      <thead><tr><th>Tarih</th><th>Plaka</th><th>Tür</th><th>Konu</th><th>Alıcılar</th><th>Sonuç</th></tr></thead>
+      <tbody>
+        ${list.map(m=>`
+          <tr>
+            <td style="font-family:var(--mono);white-space:nowrap;">${m.olusturulma ? new Date(m.olusturulma).toLocaleString('tr-TR') : '—'}</td>
+            <td style="font-family:var(--mono);">${m.plaka||'—'}</td>
+            <td>${TUR_ETIKET[m.tur]||m.tur}</td>
+            <td>${m.konu||'—'}</td>
+            <td style="font-size:12px;color:var(--ink-dim);">${(m.aliciListesi||[]).join(', ') || '—'}</td>
+            <td>${m.basarili ? '<span class="badge ok"><span class="lamp ok"></span> Gönderildi</span>' : `<span class="badge warn"><span class="lamp warn"></span> ${m.hata?m.hata:'Hata'}</span>`}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+    </div>
+  `;
+}
+
 /* ---------- FORMLAR TAB ---------- */
 let formBuilderState = null; // {id?, title, items:[{id,type,label}]}
 
@@ -1523,13 +2062,14 @@ function renderPersonelTab(){
   body.innerHTML = `
     <div class="card">
       <h2>Personel</h2>
-      <p class="hint">Personel giriş ekranındaki isim listesini ve PIN kodlarını buradan yönetin.${canEdit?'':' (Salt okunur erişim: sadece görüntüleyebilirsiniz.)'}</p>
+      <p class="hint">Personel giriş ekranındaki isim listesini, PIN kodlarını ve e-postalarını buradan yönetin. Bu liste hem Nizamiye hem Araç Takip modülü için ortaktır — bir kişiyi buraya ekleyip Araçlar sekmesinden bir araca "sorumlu" olarak atayabilirsiniz (nizamiye görevlisi olması şart değildir, sadece şoför olarak da eklenebilir). E-posta alanı, o kişiye atanmış aracın süre/durum bildirim maillerinin gönderileceği adrestir.${canEdit?'':' (Salt okunur erişim: sadece görüntüleyebilirsiniz.)'}</p>
       <div id="personelListWrap"></div>
       ${canEdit ? `
         <div style="border-top:1px solid var(--line);margin-top:18px;padding-top:18px;">
           <div class="builder-row">
             <input type="text" id="newPName" placeholder="Ad Soyad" style="flex:2;" autocomplete="off">
             <input type="text" id="newPPin" placeholder="PIN (örn: 4 haneli)" style="flex:1;" autocomplete="off">
+            <input type="email" id="newPEmail" placeholder="E-posta (opsiyonel)" style="flex:2;margin:0;" autocomplete="off">
             <button class="btn small" id="addPersonelBtn">Ekle</button>
           </div>
         </div>
@@ -1540,7 +2080,7 @@ function renderPersonelTab(){
   wrap.innerHTML = `
     <div class="table-scroll">
     <table>
-      <thead><tr><th>Ad Soyad</th><th>PIN</th><th></th></tr></thead>
+      <thead><tr><th>Ad Soyad</th><th>PIN</th><th>E-posta</th><th></th></tr></thead>
       <tbody>
         ${State.personel.map(p=>{
           if(canEdit && personelEditingId === p.id){
@@ -1548,6 +2088,7 @@ function renderPersonelTab(){
               <tr data-edit-id="${p.id}">
                 <td><input type="text" class="editName" value="${p.name}" autocomplete="off" style="margin:0;"></td>
                 <td><input type="text" class="editPin" value="${p.pin}" autocomplete="off" style="margin:0;"></td>
+                <td><input type="email" class="editEmail" value="${p.email||''}" autocomplete="off" style="margin:0;"></td>
                 <td style="white-space:nowrap;">
                   <button class="btn small" data-save="${p.id}">Kaydet</button>
                   <button class="btn ghost small" data-cancel="1">İptal</button>
@@ -1559,6 +2100,7 @@ function renderPersonelTab(){
           <tr>
             <td>${p.name}</td>
             <td style="font-family:var(--mono);">${canEdit ? p.pin : "••••"}</td>
+            <td>${p.email || '<span style="color:var(--ink-dim);">tanımsız</span>'}</td>
             <td style="white-space:nowrap;">${canEdit ? `
               <button class="btn ghost small" data-edit="${p.id}">Düzenle</button>
               <button class="btn danger small" data-id="${p.id}">Sil</button>
@@ -1592,8 +2134,9 @@ function renderPersonelTab(){
       const row = b.closest('tr');
       const newName = row.querySelector('.editName').value.trim();
       const newPin = row.querySelector('.editPin').value.trim();
+      const newEmail = row.querySelector('.editEmail').value.trim();
       if(!newName || !newPin){ toast('Ad ve PIN boş olamaz.'); return; }
-      State.personel = State.personel.map(p=> p.id===b.dataset.save ? {...p, name:newName, pin:newPin} : p);
+      State.personel = State.personel.map(p=> p.id===b.dataset.save ? {...p, name:newName, pin:newPin, email:newEmail} : p);
       await kvSet('guv-personel', State.personel);
       personelEditingId = null;
       toast('Personel güncellendi.');
@@ -1603,8 +2146,9 @@ function renderPersonelTab(){
   document.getElementById('addPersonelBtn').onclick = async ()=>{
     const name = document.getElementById('newPName').value.trim();
     const pin = document.getElementById('newPPin').value.trim();
+    const email = document.getElementById('newPEmail').value.trim();
     if(!name || !pin){ toast('Ad ve PIN gerekli.'); return; }
-    State.personel.push({id:uid('p'), name, pin});
+    State.personel.push({id:uid('p'), name, pin, email});
     await kvSet('guv-personel', State.personel);
     toast('Personel eklendi.');
     renderPersonelTab();
@@ -1627,10 +2171,40 @@ function renderAyarlarTab(){
         <input type="date" id="cleanupDate">
         <button class="btn danger small" id="cleanupBtn">Eski Kayıtları Sil</button>
       ` : `<p class="hint" style="color:var(--red);">Bu işlem için tam yetkili yönetici girişi gerekiyor (siz salt-okunur erişimle giriş yaptınız).</p>`}
-      <p class="hint" style="margin-top:14px;margin-bottom:0;">
-        Alternatif: verinin bulunduğu Google E-Tablosu'nu doğrudan açıp "Gonderimler" sekmesinde
-        istediğiniz satırları elle de silebilirsiniz — panel bunu otomatik yansıtır.
+    </div>
+
+    <div class="card">
+      <h2>🚗 Araç Takip — Bildirim Ayarları</h2>
+      <p class="hint">
+        Süre bildirimleri, tanımlı gün eşiklerine göre gönderilir (örn. "30,15,7,1" → bitişe 30, 15, 7 ve 1 gün
+        kala birer kez, ayrıca süresi geçtiyse de bir kez). Bildirimler yalnızca panel (personel veya yönetici
+        girişi) açıldığında kontrol edilir — gerçek zamanlı sunucu taraflı bir zamanlayıcı değildir; panel günlerce
+        açılmazsa, tekrar açıldığında birikmiş bildirimler tek seferde gönderilir.
       </p>
+      <label style="display:flex;align-items:center;font-family:var(--sans);">
+        <input type="checkbox" id="mailAktifChk" ${State.aracAyarlar.mailBildirimAktif?'checked':''} ${canEdit?'':'disabled'}> Mail bildirimleri açık
+      </label>
+      <label>Gün Eşikleri (virgülle ayırın)</label>
+      <input type="text" id="esikInput" value="${(State.aracAyarlar.esikGunler||[]).join(',')}" ${canEdit?'':'disabled'}>
+      ${canEdit ? `<button class="btn small" id="saveAyarBtn">Kaydet</button>` : ''}
+    </div>
+
+    <div class="card">
+      <h2>EmailJS Bağlantı Testi</h2>
+      <p class="hint">EmailJS kurulumunuzun çalışıp çalışmadığını görmek için kendinize bir test maili gönderin (bkz. PROJE_DOKUMANI.md, EmailJS kurulum adımları).</p>
+      <label>Test E-postası</label>
+      <input type="email" id="testEmailInput" placeholder="ornek@sirket.com">
+      <button class="btn ghost small" id="sendTestBtn">Test Maili Gönder</button>
+    </div>
+
+    <div class="card">
+      <h2>Eski Araç Bildirim Kayıtlarını Temizle</h2>
+      <p class="hint">Seçilen tarihten önceki araç bildirim (mail) geçmişi kalıcı olarak silinir. Toplam ${State.mailLog.length} kayıt var.</p>
+      ${canEdit ? `
+        <label>Bu tarihten önceki kayıtları sil</label>
+        <input type="date" id="cleanupMailDate">
+        <button class="btn danger small" id="cleanupMailBtn">Eski Bildirim Kayıtlarını Sil</button>
+      ` : `<p class="hint" style="color:var(--red);">Bu işlem için tam yetkili yönetici girişi gerekiyor.</p>`}
     </div>
   `;
   if(canEdit){
@@ -1648,7 +2222,37 @@ function renderAyarlarTab(){
         toast('Silme işlemi başarısız oldu. Bağlantıyı kontrol edin.');
       }
     };
+    document.getElementById('saveAyarBtn').onclick = async ()=>{
+      const nums = document.getElementById('esikInput').value.split(',').map(s=>parseInt(s.trim(),10)).filter(n=>!isNaN(n));
+      if(nums.length===0){ toast('En az bir eşik gerekli.'); return; }
+      State.aracAyarlar = {
+        mailBildirimAktif: document.getElementById('mailAktifChk').checked,
+        esikGunler: nums,
+      };
+      await kvSet('at-ayarlar', State.aracAyarlar);
+      toast('Ayarlar kaydedildi.');
+    };
+    document.getElementById('cleanupMailBtn').onclick = async ()=>{
+      const cutoff = document.getElementById('cleanupMailDate').value;
+      if(!cutoff){ toast('Önce bir tarih seçin.'); return; }
+      if(!confirm(`${trDate(cutoff)} tarihinden ÖNCEKİ tüm bildirim kayıtları kalıcı olarak silinecek. Emin misiniz?`)) return;
+      const r = await deleteMailLogsBeforeRemote(cutoff+'T00:00:00.000Z');
+      if(r && r.ok){
+        State.mailLog = await getMailLogRemote();
+        toast(`${r.deleted} kayıt silindi.`);
+        renderAyarlarTab();
+      } else { toast('Silme işlemi başarısız oldu.'); }
+    };
   }
+  document.getElementById('sendTestBtn').onclick = async ()=>{
+    const email = document.getElementById('testEmailInput').value.trim();
+    if(!email){ toast('E-posta adresi girin.'); return; }
+    const btn = document.getElementById('sendTestBtn');
+    btn.disabled = true; btn.textContent = 'Gönderiliyor…';
+    const ok = await sendTestMail(email);
+    btn.disabled = false; btn.textContent = 'Test Maili Gönder';
+    toast(ok ? '✓ Test maili gönderildi, gelen kutunuzu kontrol edin.' : '⚠ Gönderilemedi — EmailJS ayarlarını (Service/Template/Public Key) kontrol edin.');
+  };
 }
 
 /* ---------- YÖNETİCİLER TAB ---------- */
@@ -1661,9 +2265,10 @@ function renderYoneticilerTab(){
     <div class="card">
       <h2>Yöneticiler</h2>
       <p class="hint">
-        <b>Tam yetkili</b> yöneticiler her şeyi görüp değiştirebilir (form/personel düzenleme, kayıt silme).
-        <b>Salt okunur</b> yöneticiler her şeyi görebilir, PDF alabilir, ama hiçbir şeyi değiştiremez/silemez —
-        sadece takip eden yöneticiler için uygundur.
+        <b>Tam yetkili</b> yöneticiler her şeyi görüp değiştirebilir (form/personel/araç düzenleme, kayıt silme).
+        <b>Salt okunur</b> yöneticiler her şeyi görebilir, PDF alabilir, mail gönderebilir ama hiçbir şeyi
+        değiştiremez/silemez — sadece takip eden yöneticiler için uygundur. Buradaki e-postaya, tanımlı her
+        araç için (Araçlar modülü) süre/durum bildirim mailleri gider.
       </p>
       <div id="adminListWrap"></div>
       ${canEdit ? `
@@ -1671,6 +2276,7 @@ function renderYoneticilerTab(){
           <div class="builder-row">
             <input type="text" id="newAdminName" placeholder="Ad Soyad" style="flex:2;" autocomplete="off">
             <input type="text" id="newAdminPin2" placeholder="Şifre" style="flex:1;" autocomplete="off">
+            <input type="email" id="newAdminEmail" placeholder="E-posta (opsiyonel)" style="flex:2;margin:0;" autocomplete="off">
             <select id="newAdminPerm" style="flex:1;">
               <option value="full">Tam Yetkili</option>
               <option value="readonly">Salt Okunur</option>
@@ -1685,7 +2291,7 @@ function renderYoneticilerTab(){
   wrap.innerHTML = `
     <div class="table-scroll">
     <table>
-      <thead><tr><th>Ad Soyad</th><th>Şifre</th><th>Yetki</th><th></th></tr></thead>
+      <thead><tr><th>Ad Soyad</th><th>Şifre</th><th>E-posta</th><th>Yetki</th><th></th></tr></thead>
       <tbody>
         ${State.admins.map(a=>{
           if(canEdit && adminEditingId === a.id){
@@ -1693,6 +2299,7 @@ function renderYoneticilerTab(){
               <tr data-edit-id="${a.id}">
                 <td><input type="text" class="editName" value="${a.name}" autocomplete="off" style="margin:0;"></td>
                 <td><input type="text" class="editPin" value="${a.pin}" autocomplete="off" style="margin:0;"></td>
+                <td><input type="email" class="editEmail" value="${a.email||''}" autocomplete="off" style="margin:0;"></td>
                 <td>
                   <select class="editPerm" style="margin:0;">
                     <option value="full" ${a.permission==='full'?'selected':''}>Tam Yetkili</option>
@@ -1710,6 +2317,7 @@ function renderYoneticilerTab(){
           <tr>
             <td>${a.name}</td>
             <td style="font-family:var(--mono);">${canEdit ? a.pin : "••••"}</td>
+            <td>${a.email || '<span style="color:var(--ink-dim);">tanımsız</span>'}</td>
             <td><span class="badge ${a.permission==='full'?'ok':'warn'}">${a.permission==='full'?'TAM YETKİLİ':'SALT OKUNUR'}</span></td>
             <td style="white-space:nowrap;">${canEdit ? `
               <button class="btn ghost small" data-edit="${a.id}">Düzenle</button>
@@ -1745,9 +2353,10 @@ function renderYoneticilerTab(){
         const row = b.closest('tr');
         const newName = row.querySelector('.editName').value.trim();
         const newPin = row.querySelector('.editPin').value.trim();
+        const newEmail = row.querySelector('.editEmail').value.trim();
         const newPerm = row.querySelector('.editPerm').value;
         if(!newName || !newPin){ toast('Ad ve şifre boş olamaz.'); return; }
-        State.admins = State.admins.map(a=> a.id===b.dataset.save ? {...a, name:newName, pin:newPin, permission:newPerm} : a);
+        State.admins = State.admins.map(a=> a.id===b.dataset.save ? {...a, name:newName, pin:newPin, email:newEmail, permission:newPerm} : a);
         await kvSet('guv-yoneticiler', State.admins);
         adminEditingId = null;
         toast('Yönetici güncellendi.');
@@ -1762,9 +2371,10 @@ function renderYoneticilerTab(){
     document.getElementById('addAdminBtn').onclick = async ()=>{
       const name = document.getElementById('newAdminName').value.trim();
       const pin = document.getElementById('newAdminPin2').value.trim();
+      const email = document.getElementById('newAdminEmail').value.trim();
       const permission = document.getElementById('newAdminPerm').value;
       if(!name || !pin){ toast('Ad ve şifre gerekli.'); return; }
-      State.admins.push({id:uid('a'), name, pin, permission});
+      State.admins.push({id:uid('a'), name, pin, email, permission});
       await kvSet('guv-yoneticiler', State.admins);
       toast('Yönetici eklendi.');
       renderYoneticilerTab();
@@ -1899,6 +2509,7 @@ if('serviceWorker' in navigator){
         await loadActivityData();
       }
       render();
+      if(restored) checkExpiryNotifications();
     }
   }catch(err){
     console.error('Başlatma hatası', err);
