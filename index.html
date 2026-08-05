@@ -519,6 +519,7 @@ function render(){
 let loginRole = 'personel';
 
 let loginSelectedId = null;
+let loginSearchQuery = '';
 
 function renderLogin(){
   app.innerHTML = `
@@ -534,28 +535,48 @@ function renderLogin(){
       <button class="btn" id="loginBtn" style="width:100%;">Giriş Yap</button>
     </div>
   `;
-  document.getElementById('roleP').onclick = ()=>{ loginRole='personel'; loginSelectedId=null; renderLogin(); };
-  document.getElementById('roleA').onclick = ()=>{ loginRole='admin'; loginSelectedId=null; renderLogin(); };
+  document.getElementById('roleP').onclick = ()=>{ loginRole='personel'; loginSelectedId=null; loginSearchQuery=''; renderLogin(); };
+  document.getElementById('roleA').onclick = ()=>{ loginRole='admin'; loginSelectedId=null; loginSearchQuery=''; renderLogin(); };
 
   const list = loginRole === 'personel' ? State.personel : State.admins;
   if(loginSelectedId === null && list.length){ loginSelectedId = list[0].id; }
 
   const fields = document.getElementById('loginFields');
+  const showSearch = list.length > 6;
   fields.innerHTML = `
     <label>${loginRole==='personel' ? 'Personel' : 'Yönetici'}</label>
-    <div class="person-pick" id="personPick">
-      ${list.map(x=>`
-        <button type="button" class="person-pick-btn ${loginSelectedId===x.id?'on':''}" data-id="${x.id}">
-          ${x.name}${loginRole==='admin' && x.permission==='readonly' ? ' <span class="ans-time">(salt okunur)</span>' : ''}
-        </button>
-      `).join('')}
-    </div>
+    ${showSearch ? `<input type="text" id="loginSearch" placeholder="İsim ara…" autocomplete="off" value="${loginSearchQuery}" style="margin-bottom:10px;">` : ''}
+    <div class="person-pick" id="personPick"></div>
     <label>${loginRole==='personel' ? 'PIN' : 'Şifre'}</label>
     <input type="password" id="loginPin" placeholder="••••" maxlength="12" autocomplete="new-password">
   `;
-  document.getElementById('personPick').querySelectorAll('.person-pick-btn').forEach(btn=>{
-    btn.onclick = ()=>{ loginSelectedId = btn.dataset.id; renderLogin(); document.getElementById('loginPin').focus(); };
-  });
+
+  function renderPersonPickList(){
+    const q = loginSearchQuery.trim().toLocaleLowerCase('tr');
+    const filtered = q ? list.filter(x=>x.name.toLocaleLowerCase('tr').includes(q)) : list;
+    const pickWrap = document.getElementById('personPick');
+    pickWrap.innerHTML = filtered.length ? filtered.map(x=>`
+        <button type="button" class="person-pick-btn ${loginSelectedId===x.id?'on':''}" data-id="${x.id}">
+          ${x.name}${loginRole==='admin' && x.permission==='readonly' ? ' <span class="ans-time">(salt okunur)</span>' : ''}
+        </button>
+      `).join('') : `<div class="empty" style="padding:12px 0;">Eşleşen isim yok.</div>`;
+    pickWrap.querySelectorAll('.person-pick-btn').forEach(btn=>{
+      btn.onclick = ()=>{
+        loginSelectedId = btn.dataset.id;
+        renderPersonPickList();
+        document.getElementById('loginPin').focus();
+      };
+    });
+  }
+  renderPersonPickList();
+
+  if(showSearch){
+    document.getElementById('loginSearch').addEventListener('input', (e)=>{
+      loginSearchQuery = e.target.value;
+      renderPersonPickList();
+    });
+  }
+
   document.getElementById('loginPin').addEventListener('keydown', (e)=>{
     if(e.key === 'Enter'){ document.getElementById('loginBtn').click(); }
   });
