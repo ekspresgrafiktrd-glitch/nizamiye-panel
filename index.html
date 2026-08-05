@@ -249,9 +249,9 @@ const firebaseConfig = {
 
 /* ▼▼▼ EmailJS ayarları (Araç Takip modülünün mail bildirimleri için) —
    emailjs.com hesabınızdan alınır, bkz. PROJE_DOKUMANI.md ▼▼▼ */
-const EMAILJS_PUBLIC_KEY = "2uGAFJRrUEhHo3YJG";
-const EMAILJS_SERVICE_ID = "service_ju18dvw";
-const EMAILJS_TEMPLATE_ID = "template_af9vxu6";
+const EMAILJS_PUBLIC_KEY = "YOUR_EMAILJS_PUBLIC_KEY";
+const EMAILJS_SERVICE_ID = "YOUR_EMAILJS_SERVICE_ID";
+const EMAILJS_TEMPLATE_ID = "YOUR_EMAILJS_TEMPLATE_ID";
 /* ▲▲▲ */
 
 firebase.initializeApp(firebaseConfig);
@@ -414,7 +414,10 @@ function seedAraclar(){
     aktif:true, olusturulma:new Date().toISOString(),
   }];
 }
-const SEED_ARAC_AYARLAR = { esikGunler:[30,15,7,1], mailBildirimAktif:true };
+const SEED_ARAC_AYARLAR = {
+  esikler: { sonrakiBakim:7, muayeneBitis:15, sigortaBitis:15, kaskoBitis:15 },
+  mailBildirimAktif:true
+};
 
 /* ============================================================
    CEVAP ŞEKLİ: her madde {v: değer, t: işaretlenme zamanı(ISO)} olarak saklanır.
@@ -439,9 +442,9 @@ function formatTime(iso){
    SEED DATA  (mirrors the original "Gece Güvenlik Kontrol Formu")
    ============================================================ */
 const SEED_PERSONEL = [
-  {id:'p1', name:'Ahmet YILMAZ', pin:'1111', email:''},
-  {id:'p2', name:'Mehmet KAYA', pin:'2222', email:''},
-  {id:'p3', name:'Ali DEMİR', pin:'3333', email:''},
+  {id:'p1', name:'Ahmet YILMAZ', pin:'1111', email:'', telefon:'', gorevNizamiye:true, gorevArac:true},
+  {id:'p2', name:'Mehmet KAYA', pin:'2222', email:'', telefon:'', gorevNizamiye:true, gorevArac:true},
+  {id:'p3', name:'Ali DEMİR', pin:'3333', email:'', telefon:'', gorevNizamiye:true, gorevArac:true},
 ];
 
 function seedGuvenlikFormu(){
@@ -507,7 +510,7 @@ async function loadCore(){
     if(forms === null){ forms = [seedGuvenlikFormu()]; await kvSet('guv-formlar', forms); }
     if(admins === null){
       // Eski tek-şifreli sistemden geçiş: varsa o şifreyi ilk "tam yetkili" yönetici yap
-      admins = [{id:uid('a'), name:'Yönetici', pin: legacyPin || '1234', permission:'full', email:''}];
+      admins = [{id:uid('a'), name:'Yönetici', pin: legacyPin || '1234', permission:'full', email:'', telefon:''}];
       await kvSet('guv-yoneticiler', admins);
     }
     if(araclar === null){ araclar = seedAraclar(); await kvSet('at-araclar', araclar); }
@@ -522,7 +525,7 @@ async function loadCore(){
     console.error('loadCore hatası', e);
     State.personel = SEED_PERSONEL;
     State.forms = [seedGuvenlikFormu()];
-    State.admins = [{id:uid('a'), name:'Yönetici', pin:'1234', permission:'full', email:''}];
+    State.admins = [{id:uid('a'), name:'Yönetici', pin:'1234', permission:'full', email:'', telefon:''}];
     State.araclar = seedAraclar();
     State.aracAyarlar = SEED_ARAC_AYARLAR;
     return false;
@@ -565,11 +568,11 @@ function collectVehicleRecipients(vehicle){
   const seen = new Set();
   return list.filter(r=>{ if(seen.has(r.email)) return false; seen.add(r.email); return true; });
 }
-async function sendVehicleMail(vehicle, {tur, alan, esik, konu, detay}){
+async function sendVehicleMail(vehicle, {tur, alan, hedefTarih, konu, detay}){
   const recipients = collectVehicleRecipients(vehicle);
   const logBase = {
     id: uid('m'), aracId: vehicle.id, plaka: vehicle.plaka, tur,
-    alan: alan || null, esik: (esik === undefined ? null : esik),
+    alan: alan || null, hedefTarih: (hedefTarih === undefined ? null : hedefTarih),
     konu, olusturulma: new Date().toISOString(),
   };
   if(recipients.length === 0){
@@ -596,23 +599,24 @@ async function checkExpiryNotifications(){
   if(!State.aracAyarlar.mailBildirimAktif) return;
   if(State.notifChecked) return;
   State.notifChecked = true;
-  const esikler = [...(State.aracAyarlar.esikGunler||[30,15,7,1])].sort((a,b)=>a-b);
+  const esikler = State.aracAyarlar.esikler || {};
   for(const v of State.araclar){
     if(!v.aktif) continue;
     for(const alan of DATE_FIELDS){
       const iso = v[alan.key];
       if(!iso) continue;
+      const esik = (esikler[alan.key] !== undefined && esikler[alan.key] !== null) ? esikler[alan.key] : 30;
       const kalan = daysUntil(iso);
-      for(const esik of esikler){
-        if(kalan <= esik){
-          const already = State.mailLog.some(m=>m.aracId===v.id && m.alan===alan.key && m.esik===esik);
-          if(!already){
-            const konu = `${v.plaka} — ${alan.label} ${kalan<0?'süresi geçti':'yaklaşıyor'}`;
-            const detay = kalan<0
-              ? `${alan.label} tarihi ${Math.abs(kalan)} gün önce geçti (${trDate(iso)}).`
-              : `${alan.label} tarihine ${kalan} gün kaldı (${trDate(iso)}).`;
-            await sendVehicleMail(v, {tur:'sure', alan:alan.key, esik, konu, detay});
-          }
+      if(kalan <= esik){
+        // Aynı tarih değeri için daha önce mail gittiyse tekrar gönderme.
+        // Tarih güncellenirse (örn. muayene yenilendiyse) yeni bir bildirim döngüsü başlar.
+        const already = State.mailLog.some(m=>m.aracId===v.id && m.alan===alan.key && m.hedefTarih===iso);
+        if(!already){
+          const konu = `${v.plaka} — ${alan.label} ${kalan<0?'süresi geçti':'yaklaşıyor'}`;
+          const detay = kalan<0
+            ? `${alan.label} tarihi ${Math.abs(kalan)} gün önce geçti (${trDate(iso)}).`
+            : `${alan.label} tarihine ${kalan} gün kaldı (${trDate(iso)}) — uyarı eşiği: ${esik} gün.`;
+          await sendVehicleMail(v, {tur:'sure', alan:alan.key, hedefTarih:iso, konu, detay});
         }
       }
     }
@@ -624,7 +628,7 @@ async function maybeSendDurumMail(oldVehicle, newVehicle){
   if(oldVehicle && oldVehicle.durum === newVehicle.durum) return;
   const konu = `${newVehicle.plaka} — Durum değişti: ${newVehicle.durum}`;
   const detay = `${newVehicle.plaka} (${newVehicle.markaModel||'—'}) aracının durumu "${oldVehicle ? oldVehicle.durum : '—'}" iken "${newVehicle.durum}" olarak güncellendi.`;
-  await sendVehicleMail(newVehicle, {tur:'durum', alan:null, esik:null, konu, detay});
+  await sendVehicleMail(newVehicle, {tur:'durum', alan:null, konu, detay});
 }
 async function manualSendReminderMail(vehicle){
   const parts = DATE_FIELDS.map(a=>{
@@ -633,7 +637,7 @@ async function manualSendReminderMail(vehicle){
     return `${a.label}: ${trDate(iso)} (${kalan<0 ? Math.abs(kalan)+' gün gecikti' : kalan+' gün kaldı'})`;
   }).filter(Boolean).join(' · ');
   const konu = `${vehicle.plaka} — Araç Bilgilendirme (elle gönderildi)`;
-  return sendVehicleMail(vehicle, {tur:'manuel', alan:null, esik:null, konu, detay: parts || 'Tanımlı tarih yok.'});
+  return sendVehicleMail(vehicle, {tur:'manuel', alan:null, konu, detay: parts || 'Tanımlı tarih yok.'});
 }
 async function sendTestMail(toEmail){
   try{
@@ -842,17 +846,34 @@ function renderPersonelPanel(){
     renderFillForm(personelOpenFormId);
     return;
   }
-  app.innerHTML = `
-    <div class="module-tabs">
-      <button id="pTabForm" class="${personelTab==='formlar'?'active':''}">📋 FORMLAR</button>
-      <button id="pTabArac" class="${personelTab==='araclarim'?'active':''}">🚗 ARAÇLARIM</button>
-    </div>
-    <div id="personelBody"></div>
-  `;
-  document.getElementById('pTabForm').onclick = ()=>{ personelTab='formlar'; renderPersonelPanel(); };
-  document.getElementById('pTabArac').onclick = ()=>{ personelTab='araclarim'; renderPersonelPanel(); };
-  if(personelTab === 'araclarim'){ renderPersonelAraclarim(); return; }
-  renderPersonelFormlar();
+  const p = State.personel.find(x=>x.id===State.session.personelId);
+  // Eski kayıtlarda bu alanlar tanımsız olabilir — tanımsızsa "izinli" say (geriye dönük uyumluluk).
+  const canNizamiye = !p || p.gorevNizamiye !== false;
+  const canArac = !p || p.gorevArac !== false;
+
+  if(canNizamiye && canArac){
+    app.innerHTML = `
+      <div class="module-tabs">
+        <button id="pTabForm" class="${personelTab==='formlar'?'active':''}">📋 FORMLAR</button>
+        <button id="pTabArac" class="${personelTab==='araclarim'?'active':''}">🚗 ARAÇLARIM</button>
+      </div>
+      <div id="personelBody"></div>
+    `;
+    document.getElementById('pTabForm').onclick = ()=>{ personelTab='formlar'; renderPersonelPanel(); };
+    document.getElementById('pTabArac').onclick = ()=>{ personelTab='araclarim'; renderPersonelPanel(); };
+    if(personelTab === 'araclarim'){ renderPersonelAraclarim(); return; }
+    renderPersonelFormlar();
+  } else if(canArac && !canNizamiye){
+    // Sadece araç takip yetkisi var — nizamiye sekmesi hiç gösterilmez.
+    app.innerHTML = `<div id="personelBody"></div>`;
+    renderPersonelAraclarim();
+  } else if(canNizamiye && !canArac){
+    // Sadece nizamiye yetkisi var — araç sekmesi hiç gösterilmez (eski davranışla birebir aynı).
+    app.innerHTML = `<div id="personelBody"></div>`;
+    renderPersonelFormlar();
+  } else {
+    app.innerHTML = `<div class="card"><div class="empty">Hesabınıza henüz bir modül ataması yapılmamış. Yöneticinizle iletişime geçin.</div></div>`;
+  }
 }
 
 function renderPersonelFormlar(){
@@ -1617,9 +1638,10 @@ function showVehicleEditor(vehicle){
       <label>Sorumlu (Personel listesinden)</label>
       <select id="vSorumlu" ${dis}>
         <option value="">Atanmadı</option>
-        ${State.personel.map(p=>`<option value="${p.id}" ${v.sorumluId===p.id?'selected':''}>${p.name}</option>`).join('')}
+        ${State.personel.filter(p=>p.gorevArac!==false).map(p=>`<option value="${p.id}" ${v.sorumluId===p.id?'selected':''}>${p.name}</option>`).join('')}
       </select>
-      <p class="hint" style="margin:-10px 0 14px;">Listede yoksa önce Personel sekmesinden ekleyin (nizamiye görevlisi olması şart değil, sadece şoför olarak da eklenebilir).</p>
+      <p class="hint" style="margin:-10px 0 14px;">Sadece "Araç Takip" modülüne erişimi olan personel listelenir. Listede yoksa önce Personel sekmesinden ekleyin veya o kişinin "Araç Takip" iznini açın.</p>
+      ${(v.sorumluId && !State.personel.some(p=>p.id===v.sorumluId && p.gorevArac!==false)) ? `<p class="hint" style="color:var(--red);margin:-10px 0 14px;">⚠ Şu anki sorumlunun Araç Takip erişimi kapalı görünüyor — Personel sekmesinden düzeltin.</p>` : ''}
       <label>Durum</label>
       <select id="vDurum" ${dis}>${DURUM_SECENEKLERI.map(d=>`<option value="${d}" ${v.durum===d?'selected':''}>${d}</option>`).join('')}</select>
       <label>KM</label>
@@ -2056,58 +2078,50 @@ function showQrPrintView(item){
 /* ---------- PERSONEL TAB ---------- */
 let personelEditingId = null;
 
+function personGorevBadges(p){
+  const niz = p.gorevNizamiye !== false;
+  const arac = p.gorevArac !== false;
+  let out = '';
+  if(niz) out += `<span class="badge ok" style="margin-right:4px;">NİZAMİYE</span>`;
+  if(arac) out += `<span class="badge soon">ARAÇ TAKİP</span>`;
+  if(!niz && !arac) out += `<span class="badge idle">Hiçbiri</span>`;
+  return out;
+}
+
 function renderPersonelTab(){
   const body = document.getElementById('adminBody');
   const canEdit = isFullAdmin();
   body.innerHTML = `
     <div class="card">
-      <h2>Personel</h2>
-      <p class="hint">Personel giriş ekranındaki isim listesini, PIN kodlarını ve e-postalarını buradan yönetin. Bu liste hem Nizamiye hem Araç Takip modülü için ortaktır — bir kişiyi buraya ekleyip Araçlar sekmesinden bir araca "sorumlu" olarak atayabilirsiniz (nizamiye görevlisi olması şart değildir, sadece şoför olarak da eklenebilir). E-posta alanı, o kişiye atanmış aracın süre/durum bildirim maillerinin gönderileceği adrestir.${canEdit?'':' (Salt okunur erişim: sadece görüntüleyebilirsiniz.)'}</p>
+      <div class="flex-between">
+        <h2 style="margin:0;">Personel</h2>
+        ${canEdit ? `<button class="btn small" id="newPersonelBtn">+ Personel Ekle</button>` : ''}
+      </div>
+      <p class="hint">Personel giriş ekranındaki isim listesini, PIN/e-posta/telefon bilgilerini ve hangi modülleri görebileceklerini buradan yönetin. Bu liste hem Nizamiye hem Araç Takip modülü için ortaktır — bir kişiyi buraya ekleyip Araçlar sekmesinden bir araca "sorumlu" olarak atayabilirsiniz. <b>Modüller</b> sütunu, o kişi giriş yaptığında hangi sekmeleri göreceğini belirler — örneğin sadece şoför olan biri için "Nizamiye"yi kapatırsanız, güvenlik formunu hiç görmez, sadece kendi aracını görür.${canEdit?'':' (Salt okunur erişim: sadece görüntüleyebilirsiniz.)'}</p>
       <div id="personelListWrap"></div>
-      ${canEdit ? `
-        <div style="border-top:1px solid var(--line);margin-top:18px;padding-top:18px;">
-          <div class="builder-row">
-            <input type="text" id="newPName" placeholder="Ad Soyad" style="flex:2;" autocomplete="off">
-            <input type="text" id="newPPin" placeholder="PIN (örn: 4 haneli)" style="flex:1;" autocomplete="off">
-            <input type="email" id="newPEmail" placeholder="E-posta (opsiyonel)" style="flex:2;margin:0;" autocomplete="off">
-            <button class="btn small" id="addPersonelBtn">Ekle</button>
-          </div>
-        </div>
-      ` : ''}
     </div>
   `;
+  if(canEdit) document.getElementById('newPersonelBtn').onclick = ()=> showPersonelEditor(null);
+
   const wrap = document.getElementById('personelListWrap');
   wrap.innerHTML = `
     <div class="table-scroll">
     <table>
-      <thead><tr><th>Ad Soyad</th><th>PIN</th><th>E-posta</th><th></th></tr></thead>
+      <thead><tr><th>Ad Soyad</th><th>PIN</th><th>E-posta</th><th>Telefon</th><th>Modüller</th><th></th></tr></thead>
       <tbody>
-        ${State.personel.map(p=>{
-          if(canEdit && personelEditingId === p.id){
-            return `
-              <tr data-edit-id="${p.id}">
-                <td><input type="text" class="editName" value="${p.name}" autocomplete="off" style="margin:0;"></td>
-                <td><input type="text" class="editPin" value="${p.pin}" autocomplete="off" style="margin:0;"></td>
-                <td><input type="email" class="editEmail" value="${p.email||''}" autocomplete="off" style="margin:0;"></td>
-                <td style="white-space:nowrap;">
-                  <button class="btn small" data-save="${p.id}">Kaydet</button>
-                  <button class="btn ghost small" data-cancel="1">İptal</button>
-                </td>
-              </tr>
-            `;
-          }
-          return `
+        ${State.personel.map(p=>`
           <tr>
             <td>${p.name}</td>
             <td style="font-family:var(--mono);">${canEdit ? p.pin : "••••"}</td>
             <td>${p.email || '<span style="color:var(--ink-dim);">tanımsız</span>'}</td>
+            <td>${p.telefon || '<span style="color:var(--ink-dim);">tanımsız</span>'}</td>
+            <td>${personGorevBadges(p)}</td>
             <td style="white-space:nowrap;">${canEdit ? `
               <button class="btn ghost small" data-edit="${p.id}">Düzenle</button>
               <button class="btn danger small" data-id="${p.id}">Sil</button>
             ` : ''}</td>
           </tr>
-        `;
-        }).join('')}
+        `).join('')}
       </tbody>
     </table>
     </div>
@@ -2124,33 +2138,57 @@ function renderPersonelTab(){
     };
   });
   wrap.querySelectorAll('button[data-edit]').forEach(b=>{
-    b.onclick = ()=>{ personelEditingId = b.dataset.edit; renderPersonelTab(); };
+    b.onclick = ()=> showPersonelEditor(State.personel.find(x=>x.id===b.dataset.edit));
   });
-  wrap.querySelectorAll('button[data-cancel]').forEach(b=>{
-    b.onclick = ()=>{ personelEditingId = null; renderPersonelTab(); };
-  });
-  wrap.querySelectorAll('button[data-save]').forEach(b=>{
-    b.onclick = async ()=>{
-      const row = b.closest('tr');
-      const newName = row.querySelector('.editName').value.trim();
-      const newPin = row.querySelector('.editPin').value.trim();
-      const newEmail = row.querySelector('.editEmail').value.trim();
-      if(!newName || !newPin){ toast('Ad ve PIN boş olamaz.'); return; }
-      State.personel = State.personel.map(p=> p.id===b.dataset.save ? {...p, name:newName, pin:newPin, email:newEmail} : p);
-      await kvSet('guv-personel', State.personel);
-      personelEditingId = null;
-      toast('Personel güncellendi.');
-      renderPersonelTab();
-    };
-  });
-  document.getElementById('addPersonelBtn').onclick = async ()=>{
-    const name = document.getElementById('newPName').value.trim();
-    const pin = document.getElementById('newPPin').value.trim();
-    const email = document.getElementById('newPEmail').value.trim();
+}
+
+function showPersonelEditor(person){
+  const isNew = !person;
+  const p = person ? {...person} : {id:null, name:'', pin:'', email:'', telefon:'', gorevNizamiye:true, gorevArac:true};
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay';
+  overlay.innerHTML = `
+    <div class="card">
+      <h2>${isNew ? 'Personel Ekle' : 'Personeli Düzenle'}</h2>
+      <label>Ad Soyad</label>
+      <input type="text" id="pName" value="${p.name}" autocomplete="off">
+      <label>PIN</label>
+      <input type="text" id="pPin" value="${p.pin}" autocomplete="off">
+      <label>E-posta (opsiyonel — araç bildirim maili buraya gider)</label>
+      <input type="email" id="pEmail" value="${p.email||''}" autocomplete="off">
+      <label>Telefon (opsiyonel)</label>
+      <input type="text" id="pTel" value="${p.telefon||''}" placeholder="Örn: 0532 000 00 00" autocomplete="off">
+      <label>Görebileceği Modüller</label>
+      <label style="display:flex;align-items:center;font-family:var(--sans);">
+        <input type="checkbox" id="pGorevNiz" ${p.gorevNizamiye!==false?'checked':''}> Nizamiye (güvenlik) formlarını görsün
+      </label>
+      <label style="display:flex;align-items:center;font-family:var(--sans);margin-bottom:16px;">
+        <input type="checkbox" id="pGorevArac" ${p.gorevArac!==false?'checked':''}> Araç Takip'i (kendi araçlarını) görsün
+      </label>
+      <div style="display:flex;gap:10px;">
+        <button class="btn" id="pSaveBtn">Kaydet</button>
+        <button class="btn ghost" id="pCloseBtn">Vazgeç</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById('pCloseBtn').onclick = ()=> overlay.remove();
+  document.getElementById('pSaveBtn').onclick = async ()=>{
+    const name = document.getElementById('pName').value.trim();
+    const pin = document.getElementById('pPin').value.trim();
     if(!name || !pin){ toast('Ad ve PIN gerekli.'); return; }
-    State.personel.push({id:uid('p'), name, pin, email});
+    const updated = {
+      id: p.id || uid('p'), name, pin,
+      email: document.getElementById('pEmail').value.trim(),
+      telefon: document.getElementById('pTel').value.trim(),
+      gorevNizamiye: document.getElementById('pGorevNiz').checked,
+      gorevArac: document.getElementById('pGorevArac').checked,
+    };
+    if(isNew){ State.personel.push(updated); }
+    else { State.personel = State.personel.map(x=> x.id===updated.id ? updated : x); }
     await kvSet('guv-personel', State.personel);
-    toast('Personel eklendi.');
+    overlay.remove();
+    toast('Personel kaydedildi.');
     renderPersonelTab();
   };
 }
@@ -2176,16 +2214,22 @@ function renderAyarlarTab(){
     <div class="card">
       <h2>🚗 Araç Takip — Bildirim Ayarları</h2>
       <p class="hint">
-        Süre bildirimleri, tanımlı gün eşiklerine göre gönderilir (örn. "30,15,7,1" → bitişe 30, 15, 7 ve 1 gün
-        kala birer kez, ayrıca süresi geçtiyse de bir kez). Bildirimler yalnızca panel (personel veya yönetici
-        girişi) açıldığında kontrol edilir — gerçek zamanlı sunucu taraflı bir zamanlayıcı değildir; panel günlerce
-        açılmazsa, tekrar açıldığında birikmiş bildirimler tek seferde gönderilir.
+        Her tarih türü için kaç gün kala uyarı mail'i gitsin, ayrı ayrı belirleyin (örn. Muayene için "5" yazarsanız,
+        muayene bitişine 5 gün kala — ve süre geçmişse de bir kez — mail gider). Bildirimler yalnızca panel
+        (personel veya yönetici girişi) açıldığında kontrol edilir — gerçek zamanlı sunucu taraflı bir zamanlayıcı
+        değildir; panel günlerce açılmazsa, tekrar açıldığında birikmiş bildirimler tek seferde gönderilir.
       </p>
       <label style="display:flex;align-items:center;font-family:var(--sans);">
         <input type="checkbox" id="mailAktifChk" ${State.aracAyarlar.mailBildirimAktif?'checked':''} ${canEdit?'':'disabled'}> Mail bildirimleri açık
       </label>
-      <label>Gün Eşikleri (virgülle ayırın)</label>
-      <input type="text" id="esikInput" value="${(State.aracAyarlar.esikGunler||[]).join(',')}" ${canEdit?'':'disabled'}>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;">
+        ${DATE_FIELDS.map(a=>`
+          <div style="flex:1;min-width:150px;">
+            <label>${a.label} — kaç gün önce</label>
+            <input type="number" min="0" class="esikAlan" data-alan="${a.key}" value="${(State.aracAyarlar.esikler||{})[a.key] ?? 30}" ${canEdit?'':'disabled'}>
+          </div>
+        `).join('')}
+      </div>
       ${canEdit ? `<button class="btn small" id="saveAyarBtn">Kaydet</button>` : ''}
     </div>
 
@@ -2223,11 +2267,14 @@ function renderAyarlarTab(){
       }
     };
     document.getElementById('saveAyarBtn').onclick = async ()=>{
-      const nums = document.getElementById('esikInput').value.split(',').map(s=>parseInt(s.trim(),10)).filter(n=>!isNaN(n));
-      if(nums.length===0){ toast('En az bir eşik gerekli.'); return; }
+      const esikler = {};
+      document.querySelectorAll('.esikAlan').forEach(inp=>{
+        const n = parseInt(inp.value, 10);
+        esikler[inp.dataset.alan] = isNaN(n) ? 30 : n;
+      });
       State.aracAyarlar = {
         mailBildirimAktif: document.getElementById('mailAktifChk').checked,
-        esikGunler: nums,
+        esikler,
       };
       await kvSet('at-ayarlar', State.aracAyarlar);
       toast('Ayarlar kaydedildi.');
@@ -2277,6 +2324,7 @@ function renderYoneticilerTab(){
             <input type="text" id="newAdminName" placeholder="Ad Soyad" style="flex:2;" autocomplete="off">
             <input type="text" id="newAdminPin2" placeholder="Şifre" style="flex:1;" autocomplete="off">
             <input type="email" id="newAdminEmail" placeholder="E-posta (opsiyonel)" style="flex:2;margin:0;" autocomplete="off">
+            <input type="text" id="newAdminTel" placeholder="Telefon (opsiyonel)" style="flex:2;margin:0;" autocomplete="off">
             <select id="newAdminPerm" style="flex:1;">
               <option value="full">Tam Yetkili</option>
               <option value="readonly">Salt Okunur</option>
@@ -2291,7 +2339,7 @@ function renderYoneticilerTab(){
   wrap.innerHTML = `
     <div class="table-scroll">
     <table>
-      <thead><tr><th>Ad Soyad</th><th>Şifre</th><th>E-posta</th><th>Yetki</th><th></th></tr></thead>
+      <thead><tr><th>Ad Soyad</th><th>Şifre</th><th>E-posta</th><th>Telefon</th><th>Yetki</th><th></th></tr></thead>
       <tbody>
         ${State.admins.map(a=>{
           if(canEdit && adminEditingId === a.id){
@@ -2300,6 +2348,7 @@ function renderYoneticilerTab(){
                 <td><input type="text" class="editName" value="${a.name}" autocomplete="off" style="margin:0;"></td>
                 <td><input type="text" class="editPin" value="${a.pin}" autocomplete="off" style="margin:0;"></td>
                 <td><input type="email" class="editEmail" value="${a.email||''}" autocomplete="off" style="margin:0;"></td>
+                <td><input type="text" class="editTel" value="${a.telefon||''}" autocomplete="off" style="margin:0;"></td>
                 <td>
                   <select class="editPerm" style="margin:0;">
                     <option value="full" ${a.permission==='full'?'selected':''}>Tam Yetkili</option>
@@ -2318,6 +2367,7 @@ function renderYoneticilerTab(){
             <td>${a.name}</td>
             <td style="font-family:var(--mono);">${canEdit ? a.pin : "••••"}</td>
             <td>${a.email || '<span style="color:var(--ink-dim);">tanımsız</span>'}</td>
+            <td>${a.telefon || '<span style="color:var(--ink-dim);">tanımsız</span>'}</td>
             <td><span class="badge ${a.permission==='full'?'ok':'warn'}">${a.permission==='full'?'TAM YETKİLİ':'SALT OKUNUR'}</span></td>
             <td style="white-space:nowrap;">${canEdit ? `
               <button class="btn ghost small" data-edit="${a.id}">Düzenle</button>
@@ -2354,9 +2404,10 @@ function renderYoneticilerTab(){
         const newName = row.querySelector('.editName').value.trim();
         const newPin = row.querySelector('.editPin').value.trim();
         const newEmail = row.querySelector('.editEmail').value.trim();
+        const newTel = row.querySelector('.editTel').value.trim();
         const newPerm = row.querySelector('.editPerm').value;
         if(!newName || !newPin){ toast('Ad ve şifre boş olamaz.'); return; }
-        State.admins = State.admins.map(a=> a.id===b.dataset.save ? {...a, name:newName, pin:newPin, email:newEmail, permission:newPerm} : a);
+        State.admins = State.admins.map(a=> a.id===b.dataset.save ? {...a, name:newName, pin:newPin, email:newEmail, telefon:newTel, permission:newPerm} : a);
         await kvSet('guv-yoneticiler', State.admins);
         adminEditingId = null;
         toast('Yönetici güncellendi.');
@@ -2372,9 +2423,10 @@ function renderYoneticilerTab(){
       const name = document.getElementById('newAdminName').value.trim();
       const pin = document.getElementById('newAdminPin2').value.trim();
       const email = document.getElementById('newAdminEmail').value.trim();
+      const telefon = document.getElementById('newAdminTel').value.trim();
       const permission = document.getElementById('newAdminPerm').value;
       if(!name || !pin){ toast('Ad ve şifre gerekli.'); return; }
-      State.admins.push({id:uid('a'), name, pin, email, permission});
+      State.admins.push({id:uid('a'), name, pin, email, telefon, permission});
       await kvSet('guv-yoneticiler', State.admins);
       toast('Yönetici eklendi.');
       renderYoneticilerTab();
