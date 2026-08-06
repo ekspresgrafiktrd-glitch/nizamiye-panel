@@ -277,6 +277,7 @@ function ensureAuth(){
 
 const SITE_URL = window.location.origin + window.location.pathname; // sayfanın kendi gerçek adresi (QR linkleri için)
 const SCAN_ITEM_ID = new URLSearchParams(window.location.search).get('cp') || '';
+const PDKS_SCAN = new URLSearchParams(window.location.search).get('pdks') === '1'; // PDKS giriş noktası QR'ı buraya düşer
 
 /* ---- basit anahtar/değer (personel listesi, form yapısı, admin şifresi) ----
    ÖNEMLİ: Burada hataları YUTMUYORUZ (try/catch yok). Sebebi: eğer bir okuma
@@ -363,6 +364,28 @@ async function logScanRemote(data){
 async function deleteScanRemote(scanId){
   try{ await db.collection('scans').doc(scanId).delete(); return true; }
   catch(e){ console.error('scan silme hatası', e); return false; }
+}
+
+/* ---- PDKS (Personel Devam Kontrol Sistemi) kayıtları ----
+   Her doküman bir "giriş-çıkış çifti"dir: girisSaati her zaman dolu,
+   cikisSaati kişi çıkışını okutana kadar null kalır ("açık kayıt"). */
+async function getPdksKayitlarRemote(){
+  try{
+    const snap = await db.collection('pdks-kayitlar').get();
+    return snap.docs.map(d=> ({...d.data(), id: d.data().id || d.id}));
+  }catch(e){ console.error('getPdksKayitlar hatası', e); return []; }
+}
+async function addPdksKayitRemote(kayit){
+  try{ await db.collection('pdks-kayitlar').doc(kayit.id).set(kayit); return true; }
+  catch(e){ console.error('addPdksKayit hatası', e); return false; }
+}
+async function updatePdksKayitRemote(id, patch){
+  try{ await db.collection('pdks-kayitlar').doc(id).update(patch); return true; }
+  catch(e){ console.error('updatePdksKayit hatası', e); return false; }
+}
+async function deletePdksKayitRemote(id){
+  try{ await db.collection('pdks-kayitlar').doc(id).delete(); return true; }
+  catch(e){ console.error('pdks kayıt silme hatası', e); return false; }
 }
 
 function uid(prefix){ return prefix + '_' + Math.random().toString(36).slice(2,9); }
@@ -519,6 +542,38 @@ function seedGuvenlikFormu(){
    ============================================================ */
 const SEED_QR_AYARLAR = { aktif:true, toleransMetre:150 };
 
+/* ============================================================
+   PDKS (Personel Devam Kontrol Sistemi) — tek giriş noktalı,
+   QR + PIN + GPS doğrulamalı personel giriş-çıkış takibi.
+   Nizamiye'deki QR Konum Doğrulama ile AYNI mantığı (haversineMetre,
+   getCurrentPositionSafe, cihaz hatırlama) kullanır, ayrı bir
+   güvenlik katmanı icat etmiyoruz.
+   ============================================================ */
+const SEED_PDKS_AYARLAR = {
+  aktif: true,
+  lat: null, lng: null, konumDogruluk: null, konumTarihi: null, // 📍 Konum Tanımla ile doldurulur
+  toleransMetre: 150,
+  gunlukStandartMesaiDk: 540, // 9 saat — saatlik izinlerin 1 güne tamamlanma eşiği için kullanılacak (sonraki adım)
+};
+
+function todayPdks(){
+  // PDKS mağaza/gündüz vardiyası varsayımıyla TAKVİM gününü kullanır (Nizamiye'nin
+  // gece vardiyası için kullandığı 08:00 eşikli todayStr()'den kasıtlı olarak farklı).
+  return todayISOCalendar();
+}
+function pdksAcikKayit(personelId, tarih){
+  // O gün için çıkışı henüz okutulmamış (girişi var, çıkışı yok) kaydı bulur.
+  return State.pdksKayitlar.find(k => k.personelId===personelId && k.tarih===tarih && !k.cikisSaati) || null;
+}
+function pdksGunKayitlari(personelId, tarih){
+  return State.pdksKayitlar.filter(k => k.personelId===personelId && k.tarih===tarih);
+}
+function formatDakika(dk){
+  if(dk==null) return '—';
+  const saat = Math.floor(dk/60), kalanDk = Math.round(dk%60);
+  return `${saat}s ${kalanDk}dk`;
+}
+
 const State = {
   personel: [],
   forms: [],
@@ -533,6 +588,9 @@ const State = {
   aracAyarlar: SEED_ARAC_AYARLAR,
   mailLog: [],
   notifChecked: false,
+  // --- PDKS modülü ---
+  pdksAyarlar: SEED_PDKS_AYARLAR,
+  pdksKayitlar: [],
 };
 
 function isFullAdmin(){
@@ -543,7 +601,7 @@ function isFullAdmin(){
    artarsa artsın bu her zaman hızlı kalır — büyük koleksiyonları okumaz. */
 async function loadCore(){
   try{
-    let [personel, forms, admins, legacyPin, araclar, aracAyarlar, qrAyarlar] = await Promise.all([
+    let [personel, forms, admins, legacyPin, araclar, aracAyarlar, qrAyarlar, pdksAyarlar] = await Promise.all([
       kvGet('guv-personel', null),
       kvGet('guv-formlar', null),
       kvGet('guv-yoneticiler', null),
@@ -551,6 +609,7 @@ async function loadCore(){
       kvGet('at-araclar', null),
       kvGet('at-ayarlar', null),
       kvGet('guv-qr-ayarlar', null),
+      kvGet('pdks-ayarlar', null),
     ]);
     if(personel === null){ personel = SEED_PERSONEL; await kvSet('guv-personel', personel); }
     if(forms === null){ forms = [seedGuvenlikFormu()]; await kvSet('guv-formlar', forms); }
@@ -562,12 +621,14 @@ async function loadCore(){
     if(araclar === null){ araclar = seedAraclar(); await kvSet('at-araclar', araclar); }
     if(aracAyarlar === null){ aracAyarlar = SEED_ARAC_AYARLAR; await kvSet('at-ayarlar', aracAyarlar); }
     if(qrAyarlar === null){ qrAyarlar = SEED_QR_AYARLAR; await kvSet('guv-qr-ayarlar', qrAyarlar); }
+    if(pdksAyarlar === null){ pdksAyarlar = SEED_PDKS_AYARLAR; await kvSet('pdks-ayarlar', pdksAyarlar); }
     State.personel = personel;
     State.forms = forms;
     State.admins = admins;
     State.araclar = araclar;
     State.aracAyarlar = aracAyarlar;
     State.qrAyarlar = qrAyarlar;
+    State.pdksAyarlar = pdksAyarlar;
     return true;
   }catch(e){
     console.error('loadCore hatası', e);
@@ -577,6 +638,7 @@ async function loadCore(){
     State.araclar = seedAraclar();
     State.aracAyarlar = SEED_ARAC_AYARLAR;
     State.qrAyarlar = SEED_QR_AYARLAR;
+    State.pdksAyarlar = SEED_PDKS_AYARLAR;
     return false;
   }
 }
@@ -584,10 +646,11 @@ async function loadCore(){
 /* Ancak giriş yapıldıktan SONRA çağrılır: geçmiş formlar + QR taramaları.
    Bunlar zamanla büyüyen veriler, o yüzden giriş ekranını bekletmesinler diye ayrıldı. */
 async function loadActivityData(){
-  const [subs, scans, mailLog] = await Promise.all([getSubmissionsRemote(), getScansRemote(), getMailLogRemote()]);
+  const [subs, scans, mailLog, pdksKayitlar] = await Promise.all([getSubmissionsRemote(), getScansRemote(), getMailLogRemote(), getPdksKayitlarRemote()]);
   State.submissions = subs;
   State.scans = scans;
   State.mailLog = mailLog;
+  State.pdksKayitlar = pdksKayitlar;
   State.activityLoaded = true;
 }
 
@@ -896,33 +959,38 @@ function renderPersonelPanel(){
     return;
   }
   const p = State.personel.find(x=>x.id===State.session.personelId);
-  // Eski kayıtlarda bu alanlar tanımsız olabilir — tanımsızsa "izinli" say (geriye dönük uyumluluk).
+  // Eski kayıtlarda gorevNizamiye/gorevArac tanımsız olabilir — tanımsızsa "izinli" say (geriye dönük
+  // uyumluluk). gorevPdks YENİ bir alan, tanımsızsa "kapalı" say (varsayılan kapalı modül).
   const canNizamiye = !p || p.gorevNizamiye !== false;
   const canArac = !p || p.gorevArac !== false;
+  const canPdks = !!(p && p.gorevPdks);
 
-  if(canNizamiye && canArac){
-    app.innerHTML = `
-      <div class="module-tabs">
-        <button id="pTabForm" class="${personelTab==='formlar'?'active':''}">📋 FORMLAR</button>
-        <button id="pTabArac" class="${personelTab==='araclarim'?'active':''}">🚗 ARAÇLARIM</button>
-      </div>
-      <div id="personelBody"></div>
-    `;
-    document.getElementById('pTabForm').onclick = ()=>{ personelTab='formlar'; renderPersonelPanel(); };
-    document.getElementById('pTabArac').onclick = ()=>{ personelTab='araclarim'; renderPersonelPanel(); };
-    if(personelTab === 'araclarim'){ renderPersonelAraclarim(); return; }
-    renderPersonelFormlar();
-  } else if(canArac && !canNizamiye){
-    // Sadece araç takip yetkisi var — nizamiye sekmesi hiç gösterilmez.
-    app.innerHTML = `<div id="personelBody"></div>`;
-    renderPersonelAraclarim();
-  } else if(canNizamiye && !canArac){
-    // Sadece nizamiye yetkisi var — araç sekmesi hiç gösterilmez (eski davranışla birebir aynı).
-    app.innerHTML = `<div id="personelBody"></div>`;
-    renderPersonelFormlar();
-  } else {
+  const modules = [];
+  if(canNizamiye) modules.push({key:'formlar', label:'📋 FORMLAR', render:renderPersonelFormlar});
+  if(canArac) modules.push({key:'araclarim', label:'🚗 ARAÇLARIM', render:renderPersonelAraclarim});
+  if(canPdks) modules.push({key:'mesaim', label:'🕐 MESAİM', render:renderPersonelMesaim});
+
+  if(modules.length === 0){
     app.innerHTML = `<div class="card"><div class="empty">Hesabınıza henüz bir modül ataması yapılmamış. Yöneticinizle iletişime geçin.</div></div>`;
+    return;
   }
+  if(!modules.some(m=>m.key===personelTab)) personelTab = modules[0].key;
+
+  if(modules.length === 1){
+    app.innerHTML = `<div id="personelBody"></div>`;
+    modules[0].render();
+    return;
+  }
+  app.innerHTML = `
+    <div class="module-tabs">
+      ${modules.map(m=>`<button data-mt="${m.key}" class="${personelTab===m.key?'active':''}">${m.label}</button>`).join('')}
+    </div>
+    <div id="personelBody"></div>
+  `;
+  app.querySelectorAll('[data-mt]').forEach(btn=>{
+    btn.onclick = ()=>{ personelTab = btn.dataset.mt; renderPersonelPanel(); };
+  });
+  modules.find(m=>m.key===personelTab).render();
 }
 
 function renderPersonelFormlar(){
@@ -990,6 +1058,47 @@ function renderPersonelAraclarim(){
       ${v.not ? `<div style="margin-top:10px;font-size:13px;color:var(--ink-dim);"><b style="color:var(--ink);">Not:</b> ${v.not}</div>` : ''}
     </div>
   `).join('');
+}
+
+/* ---------- Mesaim (PDKS — görüntüleme amaçlı) ---------- */
+function renderPersonelMesaim(){
+  const pid = State.session.personelId;
+  const bugun = todayPdks();
+  const acik = pdksAcikKayit(pid, bugun);
+  const bugunKayitlari = pdksGunKayitlari(pid, bugun);
+
+  const ayBasi = bugun.slice(0,7); // 'YYYY-MM'
+  const ayKayitlari = State.pdksKayitlar.filter(k=>k.personelId===pid && k.tarih.startsWith(ayBasi) && k.cikisSaati);
+  const toplamDk = ayKayitlari.reduce((s,k)=> s + (k.calisilanDakika||0), 0);
+  const gunSayisi = new Set(ayKayitlari.map(k=>k.tarih)).size;
+  const eksikCikisSayisi = State.pdksKayitlar.filter(k=>k.personelId===pid && k.tarih.startsWith(ayBasi) && !k.cikisSaati).length;
+
+  const body = document.getElementById('personelBody');
+  body.innerHTML = `
+    <div class="card">
+      <h2>Bugün — ${trDate(bugun)}</h2>
+      ${bugunKayitlari.length===0 ? `<p class="hint" style="margin:0;">Bugün henüz giriş okutmadınız.</p>` : `
+        <table><thead><tr><th>Giriş</th><th>Çıkış</th><th>Süre</th></tr></thead><tbody>
+          ${bugunKayitlari.map(k=>`
+            <tr>
+              <td>${formatTime(k.girisSaati)}</td>
+              <td>${k.cikisSaati ? formatTime(k.cikisSaati) : '<span class="badge warn">Açık</span>'}</td>
+              <td>${formatDakika(k.calisilanDakika)}</td>
+            </tr>
+          `).join('')}
+        </tbody></table>
+      `}
+    </div>
+    <div class="card">
+      <h2>Bu Ay Özeti — ${ayBasi}</h2>
+      <div class="vcard-fields">
+        <div class="vcard-field"><b>Çalışılan Gün</b>${gunSayisi} gün</div>
+        <div class="vcard-field"><b>Toplam Süre</b>${formatDakika(toplamDk)}</div>
+        <div class="vcard-field"><b>Eksik Çıkış</b>${eksikCikisSayisi>0 ? `<span class="badge warn">${eksikCikisSayisi} kayıt</span>` : '0'}</div>
+      </div>
+      <p class="hint" style="margin:16px 0 0;">İzin bakiyesi ve talep geçmişi bir sonraki güncellemede bu ekrana eklenecek.</p>
+    </div>
+  `;
 }
 
 function renderFillForm(formId){
@@ -1176,6 +1285,7 @@ function renderAdminPanel(){
       <button data-t="qrturlari" class="${adminTab==='qrturlari'?'active':''}">QR TURLARI</button>
       <button data-t="formlar" class="${adminTab==='formlar'?'active':''}">FORMLAR</button>
       <button data-t="araclar" class="${adminTab==='araclar'?'active':''}">🚗 ARAÇLAR</button>
+      <button data-t="pdks" class="${adminTab==='pdks'?'active':''}">🕐 PDKS</button>
       <button data-t="bildirimler" class="${adminTab==='bildirimler'?'active':''}">BİLDİRİM GEÇMİŞİ</button>
       <button data-t="personel" class="${adminTab==='personel'?'active':''}">PERSONEL</button>
       <button data-t="yoneticiler" class="${adminTab==='yoneticiler'?'active':''}">YÖNETİCİLER</button>
@@ -1190,6 +1300,7 @@ function renderAdminPanel(){
   else if(adminTab === 'qrturlari') renderQrTurlariTab();
   else if(adminTab === 'formlar') renderFormlarTab();
   else if(adminTab === 'araclar') renderAraclarTab();
+  else if(adminTab === 'pdks') renderPdksTab();
   else if(adminTab === 'bildirimler') renderBildirimlerTab();
   else if(adminTab === 'personel') renderPersonelTab();
   else if(adminTab === 'yoneticiler') renderYoneticilerTab();
@@ -1862,7 +1973,212 @@ function showVehicleEditor(vehicle){
 
 /* ---------- BİLDİRİM GEÇMİŞİ TAB (Araç Takip mail kayıtları) ---------- */
 let bFilterPlaka = '', bFilterTur = '';
+let pdksFilterBaslangic = '', pdksFilterBitis = '', pdksFilterPersonel = '';
 const TUR_ETIKET = {sure:'Süre Bildirimi', durum:'Durum Değişikliği', manuel:'Elle Gönderildi', test:'Test'};
+
+/* ---------- PDKS TAB (Adım 1 — veri katmanı + temel giriş-çıkış) ----------
+   Mola, izin/talep akışı, resmi tatil tercihi, cumartesi rotasyonu ve
+   ay sonu detaylı rapor sonraki adımlarda bu sekmenin üzerine eklenecek. */
+function renderPdksTab(){
+  const canEdit = isFullAdmin();
+  const ay = State.pdksAyarlar;
+  const body = document.getElementById('adminBody');
+
+  const scanUrl = `${SITE_URL}?pdks=1`;
+
+  body.innerHTML = `
+    <div class="card">
+      <h2>📍 Giriş Noktası QR Kodu</h2>
+      <p class="hint">Mağaza girişine tek bir QR etiketi asın. Tüm personel, hangi departmanda olursa olsun, giriş ve çıkışını <b>aynı QR koddan</b> okutur — sistem giriş mi çıkış mı olduğunu otomatik anlar.</p>
+      <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;">
+        <div id="pdksQrHolder" style="text-align:center;"></div>
+        <div style="flex:1;min-width:220px;">
+          <p class="hint" style="margin:0 0 12px;">
+            ${ay.lat!=null
+              ? `<span class="badge ok">📍 Konum tanımlı</span> — tanımlanma: ${ay.konumTarihi ? new Date(ay.konumTarihi).toLocaleString('tr-TR') : '—'}`
+              : `<span class="badge warn">📍 Konum tanımsız</span> — konum doğrulaması bu ayara kadar devre dışı sayılır.`}
+          </p>
+          ${canEdit ? `<button class="btn ghost small" id="pdksLocBtn">${ay.lat!=null?'📍 Konumu Güncelle':'📍 Konum Tanımla'}</button>` : ''}
+          <p class="hint" style="margin-top:14px;">Konum tanımlamak için mağaza girişine fiziken gidip bu butona basın — kendi telefonunuzun anlık konumu referans olarak kaydedilir.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Ayarlar</h2>
+      ${canEdit ? `
+        <label>Konum toleransı (metre)</label>
+        <input type="number" id="pdksTolerans" value="${ay.toleransMetre}" min="10" step="10">
+        <label>Günlük standart mesai (dakika) <span style="font-weight:400;color:var(--ink-dim);">— saatlik izinlerin 1 güne tamamlanması için kullanılacak (sonraki adım)</span></label>
+        <input type="number" id="pdksStandartDk" value="${ay.gunlukStandartMesaiDk}" min="60" step="30">
+        <label style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" id="pdksAktif" ${ay.aktif!==false?'checked':''} style="width:auto;margin:0;"> PDKS modülü aktif
+        </label>
+        <button class="btn" id="pdksAyarlarKaydetBtn" style="margin-top:8px;">Kaydet</button>
+      ` : `<p class="hint" style="color:var(--red);">Bu ayarları değiştirmek için tam yetkili yönetici girişi gerekiyor.</p>`}
+    </div>
+
+    <div class="card">
+      <div class="flex-between">
+        <h2 style="margin:0;">Giriş-Çıkış Kayıtları</h2>
+        <button class="btn ghost small" id="pdksRefreshBtn">🔄 Yenile</button>
+      </div>
+      <div class="filters" style="margin-bottom:14px;">
+        <div><label>Başlangıç</label><input type="date" id="pdksFBaslangic" value="${pdksFilterBaslangic}"></div>
+        <div><label>Bitiş</label><input type="date" id="pdksFBitis" value="${pdksFilterBitis}"></div>
+        <div><label>Personel</label>
+          <select id="pdksFPersonel">
+            <option value="">Tümü</option>
+            ${State.personel.map(p=>`<option value="${p.id}" ${pdksFilterPersonel===p.id?'selected':''}>${p.name}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div id="pdksTableWrap"></div>
+    </div>
+  `;
+
+  // QR kodu çiz
+  try{
+    const dataUrl = makeQrDataUrl(scanUrl, 6);
+    document.getElementById('pdksQrHolder').innerHTML = `
+      <img src="${dataUrl}" width="180" height="180"><br>
+      <button class="btn ghost small" id="pdksQrPrintBtn" style="margin-top:8px;">Yazdır</button>
+    `;
+    document.getElementById('pdksQrPrintBtn').onclick = ()=>{
+      const w = window.open('', '_blank');
+      if(!w){ toast('Pop-up engellendi.'); return; }
+      w.document.write(`<html><head><title>PDKS Giriş Noktası</title></head>
+        <body style="text-align:center;font-family:sans-serif;padding:40px;">
+        <h2>Personel Giriş-Çıkış Noktası</h2>
+        <img src="${dataUrl}" width="220" height="220"></body></html>`);
+      w.document.close();
+      setTimeout(()=>{ w.focus(); w.print(); }, 300);
+    };
+  }catch(e){
+    console.error('PDKS QR üretme hatası', e);
+    document.getElementById('pdksQrHolder').innerHTML = `<p class="hint" style="color:var(--red);">QR üretilemedi.</p>`;
+  }
+
+  if(canEdit){
+    document.getElementById('pdksLocBtn').onclick = async ()=>{
+      const btn = document.getElementById('pdksLocBtn');
+      btn.disabled = true; btn.textContent = 'Konum alınıyor…';
+      const pos = await getCurrentPositionSafe(8000);
+      if(!pos){
+        toast('⚠ Konum alınamadı — tarayıcının konum iznini kontrol edin.');
+        btn.disabled = false; btn.textContent = ay.lat!=null?'📍 Konumu Güncelle':'📍 Konum Tanımla';
+        return;
+      }
+      State.pdksAyarlar = {...ay, lat:pos.lat, lng:pos.lng, konumDogruluk:pos.dogruluk, konumTarihi:new Date().toISOString()};
+      await kvSet('pdks-ayarlar', State.pdksAyarlar);
+      toast(`✓ Konum kaydedildi (yaklaşık doğruluk: ${Math.round(pos.dogruluk)}m).`);
+      renderPdksTab();
+    };
+    document.getElementById('pdksAyarlarKaydetBtn').onclick = async ()=>{
+      const tolerans = +document.getElementById('pdksTolerans').value || 150;
+      const standartDk = +document.getElementById('pdksStandartDk').value || 540;
+      const aktif = document.getElementById('pdksAktif').checked;
+      State.pdksAyarlar = {...State.pdksAyarlar, toleransMetre:tolerans, gunlukStandartMesaiDk:standartDk, aktif};
+      await kvSet('pdks-ayarlar', State.pdksAyarlar);
+      toast('✓ PDKS ayarları kaydedildi.');
+    };
+  }
+
+  document.getElementById('pdksFBaslangic').onchange = e=>{ pdksFilterBaslangic = e.target.value; renderPdksTab(); };
+  document.getElementById('pdksFBitis').onchange = e=>{ pdksFilterBitis = e.target.value; renderPdksTab(); };
+  document.getElementById('pdksFPersonel').onchange = e=>{ pdksFilterPersonel = e.target.value; renderPdksTab(); };
+  document.getElementById('pdksRefreshBtn').onclick = async ()=>{
+    const btn = document.getElementById('pdksRefreshBtn');
+    btn.disabled = true; btn.textContent = 'Yenileniyor…';
+    State.pdksKayitlar = await getPdksKayitlarRemote();
+    renderPdksTab();
+  };
+
+  renderPdksTable();
+}
+
+function renderPdksTable(){
+  const canEdit = isFullAdmin();
+  const wrap = document.getElementById('pdksTableWrap');
+  let rows = [...State.pdksKayitlar].sort((a,b)=> b.tarih.localeCompare(a.tarih) || (b.girisSaati||'').localeCompare(a.girisSaati||''));
+  if(pdksFilterBaslangic) rows = rows.filter(k=>k.tarih >= pdksFilterBaslangic);
+  if(pdksFilterBitis) rows = rows.filter(k=>k.tarih <= pdksFilterBitis);
+  if(pdksFilterPersonel) rows = rows.filter(k=>k.personelId === pdksFilterPersonel);
+
+  if(rows.length === 0){ wrap.innerHTML = `<div class="empty">Kayıt bulunamadı.</div>`; return; }
+
+  wrap.innerHTML = `
+    <div class="table-scroll"><table>
+      <thead><tr><th>Tarih</th><th>Personel</th><th>Giriş</th><th>Çıkış</th><th>Süre</th><th>Konum</th>${canEdit?'<th></th>':''}</tr></thead>
+      <tbody>
+        ${rows.map(k=>{
+          const konumRozet = !k.girisKonumVarMi ? '' : (k.girisKonumUyari ? '<span class="badge warn" title="Giriş konumu uyuşmuyor">📍!</span>' : '<span class="badge ok">📍</span>');
+          return `
+          <tr>
+            <td>${trDate(k.tarih)}</td>
+            <td>${k.personelName}</td>
+            <td>${formatTime(k.girisSaati)}</td>
+            <td>${k.cikisSaati ? formatTime(k.cikisSaati) : '<span class="badge warn">Eksik çıkış</span>'}</td>
+            <td>${formatDakika(k.calisilanDakika)}</td>
+            <td>${konumRozet}</td>
+            ${canEdit ? `<td><button class="btn ghost small" data-edit="${k.id}">Düzenle</button> <button class="btn danger small" data-del="${k.id}">Sil</button></td>` : ''}
+          </tr>
+        `;}).join('')}
+      </tbody>
+    </table></div>
+  `;
+  if(!canEdit) return;
+  wrap.querySelectorAll('[data-edit]').forEach(b=>{
+    b.onclick = ()=> openPdksEditOverlay(State.pdksKayitlar.find(k=>k.id===b.dataset.edit));
+  });
+  wrap.querySelectorAll('[data-del]').forEach(b=>{
+    b.onclick = async ()=>{
+      if(!confirm('Bu kaydı kalıcı olarak silmek istediğinize emin misiniz?')) return;
+      await deletePdksKayitRemote(b.dataset.del);
+      State.pdksKayitlar = State.pdksKayitlar.filter(k=>k.id!==b.dataset.del);
+      renderPdksTable();
+      toast('Kayıt silindi.');
+    };
+  });
+}
+
+function openPdksEditOverlay(kayit){
+  if(!kayit) return;
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay';
+  const girisLocal = kayit.girisSaati ? kayit.girisSaati.slice(0,16) : '';
+  const cikisLocal = kayit.cikisSaati ? kayit.cikisSaati.slice(0,16) : '';
+  overlay.innerHTML = `
+    <div class="card">
+      <h2>Kaydı Düzenle — ${kayit.personelName}</h2>
+      <p class="hint">${trDate(kayit.tarih)}. Elle yapılan değişiklikler işaretlenmez ama Nizamiye'deki gibi sorumluluk yöneticidedir — dikkatli kullanın.</p>
+      <label>Giriş Saati</label>
+      <input type="datetime-local" id="editGiris" value="${girisLocal}">
+      <label>Çıkış Saati (boş bırakılırsa "eksik çıkış" olarak kalır)</label>
+      <input type="datetime-local" id="editCikis" value="${cikisLocal}">
+      <div style="display:flex;gap:10px;">
+        <button class="btn" id="editSaveBtn">Kaydet</button>
+        <button class="btn ghost" id="editCloseBtn">Vazgeç</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById('editCloseBtn').onclick = ()=> overlay.remove();
+  document.getElementById('editSaveBtn').onclick = async ()=>{
+    const gVal = document.getElementById('editGiris').value;
+    const cVal = document.getElementById('editCikis').value;
+    if(!gVal){ toast('Giriş saati boş bırakılamaz.'); return; }
+    const girisIso = new Date(gVal).toISOString();
+    const cikisIso = cVal ? new Date(cVal).toISOString() : null;
+    const calisilanDakika = cikisIso ? Math.round((new Date(cikisIso) - new Date(girisIso)) / 60000) : null;
+    const patch = { girisSaati: girisIso, cikisSaati: cikisIso, calisilanDakika, elleDuzenlendi: true };
+    await updatePdksKayitRemote(kayit.id, patch);
+    Object.assign(kayit, patch);
+    overlay.remove();
+    renderPdksTable();
+    toast('✓ Kayıt güncellendi.');
+  };
+}
 
 function renderBildirimlerTab(){
   const body = document.getElementById('adminBody');
@@ -2260,10 +2576,12 @@ let personelEditingId = null;
 function personGorevBadges(p){
   const niz = p.gorevNizamiye !== false;
   const arac = p.gorevArac !== false;
+  const pdks = !!p.gorevPdks; // PDKS varsayılan KAPALI — mevcut personel eklenirken otomatik açılmasın istedik
   let out = '';
   if(niz) out += `<span class="badge ok" style="margin-right:4px;">NİZAMİYE</span>`;
-  if(arac) out += `<span class="badge soon">ARAÇ TAKİP</span>`;
-  if(!niz && !arac) out += `<span class="badge idle">Hiçbiri</span>`;
+  if(arac) out += `<span class="badge soon" style="margin-right:4px;">ARAÇ TAKİP</span>`;
+  if(pdks) out += `<span class="badge" style="background:rgba(120,80,200,.14);color:#7850c8;">PDKS</span>`;
+  if(!niz && !arac && !pdks) out += `<span class="badge idle">Hiçbiri</span>`;
   return out;
 }
 
@@ -2323,7 +2641,7 @@ function renderPersonelTab(){
 
 function showPersonelEditor(person){
   const isNew = !person;
-  const p = person ? {...person} : {id:null, name:'', pin:'', email:'', telefon:'', gorevNizamiye:true, gorevArac:true};
+  const p = person ? {...person} : {id:null, name:'', pin:'', email:'', telefon:'', gorevNizamiye:true, gorevArac:true, gorevPdks:false};
   const overlay = document.createElement('div');
   overlay.className = 'overlay';
   overlay.innerHTML = `
@@ -2344,6 +2662,9 @@ function showPersonelEditor(person){
       <label style="display:flex;align-items:center;font-family:var(--sans);margin-bottom:16px;">
         <input type="checkbox" id="pGorevArac" ${p.gorevArac!==false?'checked':''}> Araç Takip'i (kendi araçlarını) görsün
       </label>
+      <label style="display:flex;align-items:center;font-family:var(--sans);margin-bottom:16px;">
+        <input type="checkbox" id="pGorevPdks" ${p.gorevPdks?'checked':''}> PDKS (mesai/izin takibi) kullansın
+      </label>
       <div style="display:flex;gap:10px;">
         <button class="btn" id="pSaveBtn">Kaydet</button>
         <button class="btn ghost" id="pCloseBtn">Vazgeç</button>
@@ -2362,6 +2683,7 @@ function showPersonelEditor(person){
       telefon: document.getElementById('pTel').value.trim(),
       gorevNizamiye: document.getElementById('pGorevNiz').checked,
       gorevArac: document.getElementById('pGorevArac').checked,
+      gorevPdks: document.getElementById('pGorevPdks').checked,
     };
     if(isNew){ State.personel.push(updated); }
     else { State.personel = State.personel.map(x=> x.id===updated.id ? updated : x); }
@@ -2758,6 +3080,127 @@ function showScanSuccess(label, personelName){
 }
 
 /* ============================================================
+   PDKS QR GİRİŞ-ÇIKIŞ ONAY EKRANI
+   Nizamiye'deki QR onay akışının (submitScan/renderScanConfirm) aynısı;
+   tek fark: burada tek bir sabit nokta var (PDKS_SCAN), ve giriş mi
+   çıkış mı olduğu personelin o günkü "açık kaydı" olup olmadığına göre
+   otomatik belirlenir — personelden ayrıca seçim istenmez.
+   ============================================================ */
+async function submitPdksScan(p){
+  const ay = State.pdksAyarlar;
+  let konumVerisi = { konumVarMi:false, mesafeMetre:null, konumUyari:false };
+  if(ay.aktif!==false && ay.lat!=null && ay.lng!=null){
+    const pos = await getCurrentPositionSafe(7000);
+    if(pos){
+      const mesafe = haversineMetre(ay.lat, ay.lng, pos.lat, pos.lng);
+      const tolerans = ay.toleransMetre || 150;
+      konumVerisi = { konumVarMi:true, mesafeMetre: Math.round(mesafe), konumUyari: mesafe > tolerans };
+    }
+    // pos alınamazsa: konumVarMi false kalır, tarama yine de kaydedilir — Nizamiye ile aynı prensip.
+  }
+  const tarih = todayPdks();
+  const acik = pdksAcikKayit(p.id, tarih);
+  const now = new Date().toISOString();
+
+  if(!acik){
+    // Bugün açık kaydı yok → bu bir GİRİŞ.
+    const kayit = {
+      id: uid('pk'), personelId: p.id, personelName: p.name, tarih,
+      girisSaati: now, cikisSaati: null, calisilanDakika: null,
+      girisKonumVarMi: konumVerisi.konumVarMi, girisMesafeMetre: konumVerisi.mesafeMetre, girisKonumUyari: konumVerisi.konumUyari,
+    };
+    const ok = await addPdksKayitRemote(kayit);
+    if(ok) State.pdksKayitlar.push(kayit);
+    return ok ? {ok:true, tur:'giris', saat:now} : {ok:false};
+  } else {
+    // Açık kayıt var → bu bir ÇIKIŞ.
+    const calisilanDakika = Math.round((new Date(now) - new Date(acik.girisSaati)) / 60000);
+    const patch = {
+      cikisSaati: now, calisilanDakika,
+      cikisKonumVarMi: konumVerisi.konumVarMi, cikisMesafeMetre: konumVerisi.mesafeMetre, cikisKonumUyari: konumVerisi.konumUyari,
+    };
+    const ok = await updatePdksKayitRemote(acik.id, patch);
+    if(ok) Object.assign(acik, patch);
+    return ok ? {ok:true, tur:'cikis', saat:now, calisilanDakika} : {ok:false};
+  }
+}
+
+function renderPdksScanConfirm(){
+  const remembered = State.personel.find(p=>p.id===rememberedPersonelId());
+  if(remembered){
+    app.innerHTML = `
+      <div class="login-shell" style="text-align:center;">
+        <h1>🕐 PDKS Giriş/Çıkış</h1>
+        <p class="sub">👤 <b>${remembered.name}</b> olarak kaydedilecek.</p>
+        <div class="err" id="pdksErr"></div>
+        <button class="btn" id="pdksQuickBtn" style="width:100%;margin-bottom:10px;">✓ Onayla</button>
+        <button class="btn ghost" id="pdksSwitchBtn" style="width:100%;">Ben değilim / kişi değiştir</button>
+      </div>
+    `;
+    document.getElementById('pdksQuickBtn').onclick = async ()=>{
+      const btn = document.getElementById('pdksQuickBtn');
+      btn.disabled = true; btn.textContent = 'Konum kontrol ediliyor…';
+      const res = await submitPdksScan(remembered);
+      if(res.ok) showPdksScanSuccess(remembered.name, res);
+      else{
+        btn.disabled = false; btn.textContent = '✓ Onayla';
+        document.getElementById('pdksErr').textContent = 'Kaydedilemedi, bağlantınızı kontrol edip tekrar deneyin.';
+      }
+    };
+    document.getElementById('pdksSwitchBtn').onclick = ()=> renderPdksScanConfirmFull();
+    return;
+  }
+  renderPdksScanConfirmFull();
+}
+
+function renderPdksScanConfirmFull(){
+  app.innerHTML = `
+    <div class="login-shell">
+      <h1>🕐 PDKS Giriş/Çıkış</h1>
+      <p class="sub">İlk onay için personelinizi seçip PIN girin — bu telefon bundan sonra sizi hatırlayacak, sonraki taramalarda tek dokunuşla onaylayacaksınız.</p>
+      <label>Personel</label>
+      <select id="pdksPersonel">
+        ${State.personel.filter(p=>p.gorevPdks).map(p=>`<option value="${p.id}">${p.name}</option>`).join('')}
+      </select>
+      <label>PIN</label>
+      <input type="password" id="pdksPin" placeholder="••••" maxlength="8" autocomplete="new-password">
+      <div class="err" id="pdksErr"></div>
+      <button class="btn" id="pdksConfirmBtn" style="width:100%;">Onayla</button>
+    </div>
+  `;
+  document.getElementById('pdksConfirmBtn').onclick = async ()=>{
+    const err = document.getElementById('pdksErr');
+    const pin = document.getElementById('pdksPin').value.trim();
+    const sel = document.getElementById('pdksPersonel');
+    const p = State.personel.find(x=>x.id===sel.value);
+    if(!p){ err.textContent = 'Personel listesi boş görünüyor — yöneticinize PDKS erişiminizin açık olup olmadığını sorun.'; return; }
+    if(pin !== p.pin){ err.textContent = 'PIN hatalı.'; return; }
+    const btn = document.getElementById('pdksConfirmBtn');
+    btn.disabled = true; btn.textContent = 'Konum kontrol ediliyor…';
+    const res = await submitPdksScan(p);
+    if(res.ok){
+      rememberPersonelId(p.id);
+      showPdksScanSuccess(p.name, res);
+    } else {
+      btn.disabled = false; btn.textContent = 'Onayla';
+      err.textContent = 'Kaydedilemedi, bağlantınızı kontrol edip tekrar deneyin.';
+    }
+  };
+}
+
+function showPdksScanSuccess(personelName, res){
+  const isGiris = res.tur === 'giris';
+  app.innerHTML = `
+    <div class="login-shell" style="text-align:center;">
+      <div style="font-size:48px;margin-bottom:12px;">${isGiris ? '🟢' : '🔴'}</div>
+      <h1>${isGiris ? 'Giriş Kaydedildi' : 'Çıkış Kaydedildi'}</h1>
+      <p class="sub">${personelName} — ${formatTime(res.saat)}</p>
+      ${!isGiris ? `<p class="sub">Bugün toplam: <b>${formatDakika(res.calisilanDakika)}</b></p>` : ''}
+      <button class="btn ghost" style="width:100%;" onclick="location.href=SITE_URL">Panele Dön</button>
+    </div>`;
+}
+
+/* ============================================================
    INIT
    ============================================================ */
 if('serviceWorker' in navigator){
@@ -2771,6 +3214,10 @@ if('serviceWorker' in navigator){
     await loadCore();
     if(SCAN_ITEM_ID){
       renderScanConfirm();
+    } else if(PDKS_SCAN){
+      // Açık kaydı (giriş mi çıkış mı) doğru belirleyebilmek için bugünün PDKS kayıtlarına ihtiyaç var.
+      State.pdksKayitlar = await getPdksKayitlarRemote();
+      renderPdksScanConfirm();
     } else {
       const restored = restoreSessionIfValid();
       if(restored){
