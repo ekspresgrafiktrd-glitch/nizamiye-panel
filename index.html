@@ -387,6 +387,14 @@ async function deletePdksKayitRemote(id){
   try{ await db.collection('pdks-kayitlar').doc(id).delete(); return true; }
   catch(e){ console.error('pdks kayıt silme hatası', e); return false; }
 }
+async function deletePdksKayitlarBeforeRemote(cutoff){
+  try{
+    let deleted = 0;
+    const snap = await db.collection('pdks-kayitlar').where('tarih', '<', cutoff).get();
+    for(const d of snap.docs){ await d.ref.delete(); deleted++; }
+    return {ok:true, deleted};
+  }catch(e){ console.error('pdks toplu silme hatası', e); return {ok:false, deleted:0}; }
+}
 
 function uid(prefix){ return prefix + '_' + Math.random().toString(36).slice(2,9); }
 /* Gece vardiyası gece yarısını geçtiği için "gün" kavramını takvim gününe değil
@@ -1989,33 +1997,18 @@ function renderPdksTab(){
   body.innerHTML = `
     <div class="card">
       <h2>📍 Giriş Noktası QR Kodu</h2>
-      <p class="hint">Mağaza girişine tek bir QR etiketi asın. Tüm personel, hangi departmanda olursa olsun, giriş ve çıkışını <b>aynı QR koddan</b> okutur — sistem giriş mi çıkış mı olduğunu otomatik anlar.</p>
+      <p class="hint">Mağaza girişine tek bir QR etiketi asın. Tüm personel, hangi departmanda olursa olsun, giriş ve çıkışını <b>aynı QR koddan</b> okutur — sistem giriş mi çıkış mı olduğunu otomatik anlar.
+        Konum tanımlama ve diğer PDKS ayarları için <b>AYARLAR</b> sekmesine bakın.</p>
       <div style="display:flex;gap:20px;flex-wrap:wrap;align-items:flex-start;">
         <div id="pdksQrHolder" style="text-align:center;"></div>
         <div style="flex:1;min-width:220px;">
-          <p class="hint" style="margin:0 0 12px;">
+          <p class="hint" style="margin:0;">
             ${ay.lat!=null
               ? `<span class="badge ok">📍 Konum tanımlı</span> — tanımlanma: ${ay.konumTarihi ? new Date(ay.konumTarihi).toLocaleString('tr-TR') : '—'}`
               : `<span class="badge warn">📍 Konum tanımsız</span> — konum doğrulaması bu ayara kadar devre dışı sayılır.`}
           </p>
-          ${canEdit ? `<button class="btn ghost small" id="pdksLocBtn">${ay.lat!=null?'📍 Konumu Güncelle':'📍 Konum Tanımla'}</button>` : ''}
-          <p class="hint" style="margin-top:14px;">Konum tanımlamak için mağaza girişine fiziken gidip bu butona basın — kendi telefonunuzun anlık konumu referans olarak kaydedilir.</p>
         </div>
       </div>
-    </div>
-
-    <div class="card">
-      <h2>Ayarlar</h2>
-      ${canEdit ? `
-        <label>Konum toleransı (metre)</label>
-        <input type="number" id="pdksTolerans" value="${ay.toleransMetre}" min="10" step="10">
-        <label>Günlük standart mesai (dakika) <span style="font-weight:400;color:var(--ink-dim);">— saatlik izinlerin 1 güne tamamlanması için kullanılacak (sonraki adım)</span></label>
-        <input type="number" id="pdksStandartDk" value="${ay.gunlukStandartMesaiDk}" min="60" step="30">
-        <label style="display:flex;align-items:center;gap:8px;">
-          <input type="checkbox" id="pdksAktif" ${ay.aktif!==false?'checked':''} style="width:auto;margin:0;"> PDKS modülü aktif
-        </label>
-        <button class="btn" id="pdksAyarlarKaydetBtn" style="margin-top:8px;">Kaydet</button>
-      ` : `<p class="hint" style="color:var(--red);">Bu ayarları değiştirmek için tam yetkili yönetici girişi gerekiyor.</p>`}
     </div>
 
     <div class="card">
@@ -2023,6 +2016,15 @@ function renderPdksTab(){
         <h2 style="margin:0;">Giriş-Çıkış Kayıtları</h2>
         <button class="btn ghost small" id="pdksRefreshBtn">🔄 Yenile</button>
       </div>
+      ${(() => {
+        const bugun = todayPdks();
+        const gercekEksik = State.pdksKayitlar.filter(k=>!k.cikisSaati && k.tarih!==bugun).length;
+        const icerde = State.pdksKayitlar.filter(k=>!k.cikisSaati && k.tarih===bugun).length;
+        return `<p class="hint" style="margin:-8px 0 14px;">
+          ${icerde>0 ? `<span class="badge soon" style="margin-right:6px;">🟢 ${icerde} kişi şu an içeride</span>` : ''}
+          ${gercekEksik>0 ? `<span class="badge warn">⚠ ${gercekEksik} kayıtta gerçek eksik çıkış var — geçmiş güne ait, düzeltme gerekiyor</span>` : (icerde===0 ? '<span class="badge ok">✓ Bekleyen sorun yok</span>' : '')}
+        </p>`;
+      })()}
       <div class="filters" style="margin-bottom:14px;">
         <div><label>Başlangıç</label><input type="date" id="pdksFBaslangic" value="${pdksFilterBaslangic}"></div>
         <div><label>Bitiş</label><input type="date" id="pdksFBitis" value="${pdksFilterBitis}"></div>
@@ -2059,31 +2061,6 @@ function renderPdksTab(){
     document.getElementById('pdksQrHolder').innerHTML = `<p class="hint" style="color:var(--red);">QR üretilemedi.</p>`;
   }
 
-  if(canEdit){
-    document.getElementById('pdksLocBtn').onclick = async ()=>{
-      const btn = document.getElementById('pdksLocBtn');
-      btn.disabled = true; btn.textContent = 'Konum alınıyor…';
-      const pos = await getCurrentPositionSafe(8000);
-      if(!pos){
-        toast('⚠ Konum alınamadı — tarayıcının konum iznini kontrol edin.');
-        btn.disabled = false; btn.textContent = ay.lat!=null?'📍 Konumu Güncelle':'📍 Konum Tanımla';
-        return;
-      }
-      State.pdksAyarlar = {...ay, lat:pos.lat, lng:pos.lng, konumDogruluk:pos.dogruluk, konumTarihi:new Date().toISOString()};
-      await kvSet('pdks-ayarlar', State.pdksAyarlar);
-      toast(`✓ Konum kaydedildi (yaklaşık doğruluk: ${Math.round(pos.dogruluk)}m).`);
-      renderPdksTab();
-    };
-    document.getElementById('pdksAyarlarKaydetBtn').onclick = async ()=>{
-      const tolerans = +document.getElementById('pdksTolerans').value || 150;
-      const standartDk = +document.getElementById('pdksStandartDk').value || 540;
-      const aktif = document.getElementById('pdksAktif').checked;
-      State.pdksAyarlar = {...State.pdksAyarlar, toleransMetre:tolerans, gunlukStandartMesaiDk:standartDk, aktif};
-      await kvSet('pdks-ayarlar', State.pdksAyarlar);
-      toast('✓ PDKS ayarları kaydedildi.');
-    };
-  }
-
   document.getElementById('pdksFBaslangic').onchange = e=>{ pdksFilterBaslangic = e.target.value; renderPdksTab(); };
   document.getElementById('pdksFBitis').onchange = e=>{ pdksFilterBitis = e.target.value; renderPdksTab(); };
   document.getElementById('pdksFPersonel').onchange = e=>{ pdksFilterPersonel = e.target.value; renderPdksTab(); };
@@ -2118,7 +2095,7 @@ function renderPdksTable(){
             <td>${trDate(k.tarih)}</td>
             <td>${k.personelName}</td>
             <td>${formatTime(k.girisSaati)}</td>
-            <td>${k.cikisSaati ? formatTime(k.cikisSaati) : '<span class="badge warn">Eksik çıkış</span>'}</td>
+            <td>${k.cikisSaati ? formatTime(k.cikisSaati) : (k.tarih===todayPdks() ? '<span class="badge soon">🟢 İçeride</span>' : '<span class="badge warn">⚠ Eksik çıkış</span>')}</td>
             <td>${formatDakika(k.calisilanDakika)}</td>
             <td>${konumRozet}</td>
             ${canEdit ? `<td><button class="btn ghost small" data-edit="${k.id}">Düzenle</button> <button class="btn danger small" data-del="${k.id}">Sil</button></td>` : ''}
@@ -2760,6 +2737,41 @@ function renderAyarlarTab(){
     </div>
 
     <div class="card">
+      <h2>🕐 PDKS Ayarları</h2>
+      <p class="hint">
+        Mağaza girişindeki tek QR noktasının referans konumu ve genel PDKS ayarları burada yönetilir.
+        QR kodunun kendisini görüntülemek/yazdırmak için <b>PDKS</b> sekmesine bakın.
+      </p>
+      <p class="hint" style="margin:0 0 12px;">
+        ${State.pdksAyarlar.lat!=null
+          ? `<span class="badge ok">📍 Konum tanımlı</span> — tanımlanma: ${State.pdksAyarlar.konumTarihi ? new Date(State.pdksAyarlar.konumTarihi).toLocaleString('tr-TR') : '—'}`
+          : `<span class="badge warn">📍 Konum tanımsız</span> — konum doğrulaması bu ayara kadar devre dışı sayılır.`}
+      </p>
+      ${canEdit ? `
+        <button class="btn ghost small" id="pdksLocBtn" style="margin-bottom:16px;">${State.pdksAyarlar.lat!=null?'📍 Konumu Güncelle':'📍 Konum Tanımla'}</button>
+        <p class="hint" style="margin:-8px 0 16px;">Konum tanımlamak için mağaza girişine fiziken gidip bu butona basın — kendi telefonunuzun anlık konumu referans olarak kaydedilir.</p>
+        <label>Konum toleransı (metre)</label>
+        <input type="number" id="pdksTolerans" value="${State.pdksAyarlar.toleransMetre}" min="10" step="10">
+        <label>Günlük standart mesai (dakika) <span style="font-weight:400;color:var(--ink-dim);">— saatlik izinlerin 1 güne tamamlanması için kullanılacak (sonraki adım)</span></label>
+        <input type="number" id="pdksStandartDk" value="${State.pdksAyarlar.gunlukStandartMesaiDk}" min="60" step="30">
+        <label style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" id="pdksAktif" ${State.pdksAyarlar.aktif!==false?'checked':''} style="width:auto;margin:0;"> PDKS modülü aktif
+        </label>
+        <button class="btn small" id="saveePdksAyarBtn" style="margin-top:8px;">Kaydet</button>
+      ` : `<p class="hint" style="color:var(--red);">Bu ayarları değiştirmek için tam yetkili yönetici girişi gerekiyor.</p>`}
+    </div>
+
+    <div class="card">
+      <h2>Eski PDKS Kayıtlarını Temizle</h2>
+      <p class="hint">Seçilen tarihten önceki giriş-çıkış kayıtları kalıcı olarak silinir. Toplam ${State.pdksKayitlar.length} kayıt var.</p>
+      ${canEdit ? `
+        <label>Bu tarihten önceki kayıtları sil</label>
+        <input type="date" id="cleanupPdksDate">
+        <button class="btn danger small" id="cleanupPdksBtn">Eski PDKS Kayıtlarını Sil</button>
+      ` : `<p class="hint" style="color:var(--red);">Bu işlem için tam yetkili yönetici girişi gerekiyor.</p>`}
+    </div>
+
+    <div class="card">
       <h2>Eski Araç Bildirim Kayıtlarını Temizle</h2>
       <p class="hint">Seçilen tarihten önceki araç bildirim (mail) geçmişi kalıcı olarak silinir. Toplam ${State.mailLog.length} kayıt var.</p>
       ${canEdit ? `
@@ -2813,6 +2825,39 @@ function renderAyarlarTab(){
       const r = await deleteMailLogsBeforeRemote(cutoff+'T00:00:00.000Z');
       if(r && r.ok){
         State.mailLog = await getMailLogRemote();
+        toast(`${r.deleted} kayıt silindi.`);
+        renderAyarlarTab();
+      } else { toast('Silme işlemi başarısız oldu.'); }
+    };
+    document.getElementById('pdksLocBtn').onclick = async ()=>{
+      const btn = document.getElementById('pdksLocBtn');
+      btn.disabled = true; btn.textContent = 'Konum alınıyor…';
+      const pos = await getCurrentPositionSafe(8000);
+      if(!pos){
+        toast('⚠ Konum alınamadı — tarayıcının konum iznini kontrol edin.');
+        btn.disabled = false; btn.textContent = State.pdksAyarlar.lat!=null?'📍 Konumu Güncelle':'📍 Konum Tanımla';
+        return;
+      }
+      State.pdksAyarlar = {...State.pdksAyarlar, lat:pos.lat, lng:pos.lng, konumDogruluk:pos.dogruluk, konumTarihi:new Date().toISOString()};
+      await kvSet('pdks-ayarlar', State.pdksAyarlar);
+      toast(`✓ Konum kaydedildi (yaklaşık doğruluk: ${Math.round(pos.dogruluk)}m).`);
+      renderAyarlarTab();
+    };
+    document.getElementById('saveePdksAyarBtn').onclick = async ()=>{
+      const tolerans = +document.getElementById('pdksTolerans').value || 150;
+      const standartDk = +document.getElementById('pdksStandartDk').value || 540;
+      const aktif = document.getElementById('pdksAktif').checked;
+      State.pdksAyarlar = {...State.pdksAyarlar, toleransMetre:tolerans, gunlukStandartMesaiDk:standartDk, aktif};
+      await kvSet('pdks-ayarlar', State.pdksAyarlar);
+      toast('✓ PDKS ayarları kaydedildi.');
+    };
+    document.getElementById('cleanupPdksBtn').onclick = async ()=>{
+      const cutoff = document.getElementById('cleanupPdksDate').value;
+      if(!cutoff){ toast('Önce bir tarih seçin.'); return; }
+      if(!confirm(`${trDate(cutoff)} tarihinden ÖNCEKİ tüm PDKS kayıtları kalıcı olarak silinecek. Emin misiniz?`)) return;
+      const r = await deletePdksKayitlarBeforeRemote(cutoff);
+      if(r && r.ok){
+        State.pdksKayitlar = await getPdksKayitlarRemote();
         toast(`${r.deleted} kayıt silindi.`);
         renderAyarlarTab();
       } else { toast('Silme işlemi başarısız oldu.'); }
@@ -3238,6 +3283,6 @@ if('serviceWorker' in navigator){
     `;
   }
 })();
-</script> 
+</script>
 </body>
 </html>
